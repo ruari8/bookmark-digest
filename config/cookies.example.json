@@ -1,0 +1,5 @@
+{
+  "auth_token": "YOUR_AUTH_TOKEN_HERE",
+  "ct0": "YOUR_CT0_TOKEN_HERE",
+  "_note": "Get these from browser DevTools: Network tab > any x.com request > Cookies"
+}

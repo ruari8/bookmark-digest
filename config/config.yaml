@@ -1,0 +1,44 @@
+# Bookmark Digest Configuration
+
+# Output settings
+output:
+  directory: "../"  # Parent learn/ folder
+  format: "markdown"  # markdown, pdf, or both
+  filename_template: "weekly-digest-{date}.md"
+
+# AI Research settings
+ai:
+  provider: "anthropic"  # anthropic or openai
+  model: "claude-sonnet-4-20250514"
+  # For complex research, use a more capable model
+  research_model: "claude-sonnet-4-20250514"
+  max_tokens: 8192
+
+# Content extraction
+parser:
+  # Maximum articles to extract per run
+  max_articles: 50
+  # Timeout for fetching URLs (seconds)
+  fetch_timeout: 30
+  # Extract full thread for tweet replies
+  extract_threads: true
+
+# Scraper settings
+scraper:
+  # How many bookmarks to fetch per run (0 = all new since last run)
+  max_bookmarks: 0
+  # Only process bookmarks newer than this many days (0 = no limit)
+  days_limit: 7
+
+# Audio settings (optional)
+audio:
+  enabled: false
+  provider: "openai"  # openai or elevenlabs
+  voice: "alloy"  # OpenAI voices: alloy, echo, fable, onyx, nova, shimmer
+  output_format: "mp3"
+
+# Scheduling (for reference - actual scheduling done via launchd/cron)
+schedule:
+  day: "sunday"
+  hour: 8
+  minute: 0

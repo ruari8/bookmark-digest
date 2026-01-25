@@ -1,0 +1,30 @@
+# Credentials - NEVER commit
+config/cookies.json
+
+# Data files
+data/raw/
+data/processed.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated outputs (these go to parent learn/ folder)
+*.mp3
