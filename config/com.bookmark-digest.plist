@@ -9,6 +9,9 @@
     <array>
         <string>/usr/bin/python3</string>
         <string>/Users/ruari/Documents/Startups/learn/bookmark-digest/run.py</string>
+        <string>--output-format</string>
+        <string>pdf</string>
+        <string>--email</string>
     </array>
 
     <key>StartCalendarInterval</key>

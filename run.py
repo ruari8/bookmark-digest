@@ -25,6 +25,7 @@ from src.parser import parse_bookmarks
 from src.researcher import research_bookmarks
 from src.generator import generate_document
 from src.audio import generate_audio, print_notebooklm_instructions
+from src.emailer import load_email_config, send_digest_email, send_empty_status_email
 
 console = Console()
 
@@ -108,6 +109,18 @@ def save_processed_ids(ids: list[str], existing_ids: list[str]):
     is_flag=True,
     help="Fetch bookmarks but don't generate documents",
 )
+@click.option(
+    "--email/--no-email",
+    "email_enabled",
+    default=None,
+    help="Send digest email (overrides config)",
+)
+@click.option(
+    "--email-to",
+    type=str,
+    default=None,
+    help="Override email recipients (comma-separated)",
+)
 def main(
     since: Optional[str],
     max_bookmarks: int,
@@ -116,6 +129,8 @@ def main(
     notebooklm: bool,
     force: bool,
     dry_run: bool,
+    email_enabled: Optional[bool],
+    email_to: Optional[str],
 ):
     """
     Generate a research digest from your X bookmarks.
@@ -136,6 +151,7 @@ def main(
         python run.py --force                # Reprocess all bookmarks
         python run.py --output-format pdf    # Generate PDF
         python run.py --tts                  # Generate audio
+        python run.py --email                # Send digest email
     """
     console.print(Panel.fit(
         "[bold blue]Bookmark Digest[/bold blue]\n"
@@ -145,6 +161,11 @@ def main(
 
     # Load config
     config = load_config()
+    email_config = load_email_config(
+        config,
+        enabled_override=email_enabled,
+        recipients_override=email_to,
+    )
 
     # Load processed IDs
     processed_ids = [] if force else load_processed_ids()
@@ -185,6 +206,17 @@ def main(
 
     if not tweets:
         console.print("[yellow]No new bookmarks to process.[/yellow]")
+        if email_config.enabled and email_config.send_on_empty:
+            console.print("[bold]Sending status email (no new bookmarks)[/bold]")
+            try:
+                send_empty_status_email(
+                    email_config=email_config,
+                    reason="No new bookmarks",
+                )
+                console.print("[green]Status email sent[/green]")
+            except Exception as e:
+                console.print(f"[red]Failed to send status email: {e}[/red]")
+                sys.exit(1)
         sys.exit(0)
 
     console.print(f"[green]Found {len(tweets)} new bookmarks[/green]")
@@ -212,6 +244,9 @@ def main(
         parsed,
         provider=ai_config.get("provider", "anthropic"),
         model=ai_config.get("model", "claude-sonnet-4-20250514"),
+        claude_cli_tools=ai_config.get("claude_cli_tools", None),
+        claude_cli_permission_mode=ai_config.get("claude_cli_permission_mode", "bypassPermissions"),
+        claude_cli_dangerously_skip_permissions=ai_config.get("claude_cli_dangerously_skip_permissions", True),
     )
 
     # Step 4: Generate document
@@ -241,6 +276,33 @@ def main(
     # NotebookLM instructions
     if notebooklm and results.get("markdown"):
         print_notebooklm_instructions(results["markdown"])
+
+    # Step 6: Email delivery (optional)
+    if email_config.enabled:
+        console.print("\n[bold]Step 6: Sending email[/bold]")
+        try:
+            attachment = send_digest_email(
+                email_config=email_config,
+                research=research,
+                results=results,
+                bookmark_count=len(tweets),
+            )
+            recipients = ", ".join(email_config.to_addresses)
+            console.print(f"[green]Email sent to {recipients} ({attachment.name})[/green]")
+        except FileNotFoundError as e:
+            console.print(f"[red]Email attachment error: {e}[/red]")
+            try:
+                send_empty_status_email(
+                    email_config=email_config,
+                    reason="Digest email failed",
+                    details=str(e),
+                )
+            except Exception as status_error:
+                console.print(f"[yellow]Also failed to send status email: {status_error}[/yellow]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[red]Email delivery failed: {e}[/red]")
+            sys.exit(1)
 
     # Save processed IDs
     new_ids = [t.id for t in tweets]

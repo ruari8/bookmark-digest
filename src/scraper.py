@@ -6,6 +6,7 @@ Uses cookie-based authentication to fetch bookmarks from X's internal API.
 
 import json
 import asyncio
+import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
@@ -35,6 +36,258 @@ class Tweet:
     quote_tweet: Optional[dict] = None
     reply_to_id: Optional[str] = None
     bookmark_timestamp: Optional[str] = None
+
+
+def save_raw_tweets(tweets: list[Tweet], filename: Optional[str] = None):
+    """Save tweet data for debugging/reference."""
+    if not filename:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"bookmarks_{timestamp}.json"
+
+    raw_dir = DATA_DIR / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    filepath = raw_dir / filename
+    with open(filepath, "w") as f:
+        json.dump([asdict(t) for t in tweets], f, indent=2)
+
+    console.print(f"[dim]Saved raw data to {filepath}[/dim]")
+
+
+class BirdBookmarkScraper:
+    """Fetches bookmarks using the bird CLI (primary scraper)."""
+
+    def __init__(self, cookies_path: Optional[Path] = None):
+        self.cookies_path = cookies_path or CONFIG_DIR / "cookies.json"
+        self.cookies = self._load_optional_cookies()
+
+    def _load_optional_cookies(self) -> Optional[dict]:
+        """Load cookies if available so bird can run without browser profile setup."""
+        if not self.cookies_path.exists():
+            return None
+
+        try:
+            with open(self.cookies_path) as f:
+                cookies = json.load(f)
+        except Exception:
+            return None
+
+        required = ("auth_token", "ct0")
+        if all(
+            key in cookies
+            and isinstance(cookies[key], str)
+            and cookies[key]
+            and not cookies[key].startswith("YOUR_")
+            for key in required
+        ):
+            return {key: cookies[key] for key in required}
+        return None
+
+    def _build_command(self, max_count: int, since_id: Optional[str]) -> list[str]:
+        """Build bird CLI command."""
+        command = ["bird", "bookmarks", "--json", "--plain"]
+
+        # If we need to stop at a since_id, fetch all pages and stop locally.
+        if since_id or max_count == 0:
+            command.append("--all")
+        else:
+            command.extend(["-n", str(max_count)])
+
+        # Prefer explicit cookie auth (if present) over browser-profile auth.
+        if self.cookies:
+            command.extend(["--auth-token", self.cookies["auth_token"], "--ct0", self.cookies["ct0"]])
+
+        return command
+
+    @staticmethod
+    def _extract_urls(tweet: dict) -> list[str]:
+        """Extract non-X URLs from a bird tweet payload."""
+        urls = []
+
+        def maybe_add(url: str):
+            if not url:
+                return
+            if url.startswith("https://twitter.com/") or url.startswith("https://x.com/"):
+                return
+            urls.append(url)
+
+        for item in tweet.get("urls", []):
+            if isinstance(item, str):
+                maybe_add(item)
+            elif isinstance(item, dict):
+                maybe_add(item.get("expanded_url") or item.get("url") or "")
+
+        for container in (tweet, tweet.get("legacy", {})):
+            for entity in container.get("entities", {}).get("urls", []):
+                maybe_add(entity.get("expanded_url") or entity.get("url") or "")
+
+        # Deduplicate while preserving order
+        seen = set()
+        deduped = []
+        for url in urls:
+            if url not in seen:
+                seen.add(url)
+                deduped.append(url)
+        return deduped
+
+    @staticmethod
+    def _extract_media_urls(tweet: dict) -> list[str]:
+        """Extract media URLs from a bird tweet payload."""
+        media_urls = []
+
+        def add_media_url(url: str):
+            if url:
+                media_urls.append(url)
+
+        for media in tweet.get("media", []):
+            if isinstance(media, str):
+                add_media_url(media)
+            elif isinstance(media, dict):
+                add_media_url(
+                    media.get("media_url_https")
+                    or media.get("media_url")
+                    or media.get("url")
+                    or ""
+                )
+                variants = media.get("video_info", {}).get("variants", [])
+                mp4_variants = [v for v in variants if v.get("content_type") == "video/mp4"]
+                if mp4_variants:
+                    best = max(mp4_variants, key=lambda v: v.get("bitrate", 0))
+                    add_media_url(best.get("url", ""))
+
+        legacy_media = tweet.get("legacy", {}).get("extended_entities", {}).get("media", [])
+        for media in legacy_media:
+            if media.get("type") == "photo":
+                add_media_url(media.get("media_url_https", ""))
+            elif media.get("type") == "video":
+                variants = media.get("video_info", {}).get("variants", [])
+                mp4_variants = [v for v in variants if v.get("content_type") == "video/mp4"]
+                if mp4_variants:
+                    best = max(mp4_variants, key=lambda v: v.get("bitrate", 0))
+                    add_media_url(best.get("url", ""))
+
+        return [url for url in dict.fromkeys(media_urls) if url]
+
+    @staticmethod
+    def _parse_quote_tweet(tweet: dict) -> Optional[dict]:
+        """Parse quoted tweet if present."""
+        quoted = tweet.get("quoted_tweet") or tweet.get("quotedTweet")
+        if not isinstance(quoted, dict):
+            return None
+
+        quoted_author = quoted.get("author", {}) if isinstance(quoted.get("author"), dict) else {}
+        quoted_legacy = quoted.get("legacy", {}) if isinstance(quoted.get("legacy"), dict) else {}
+
+        return {
+            "id": str(quoted.get("id") or quoted.get("rest_id") or ""),
+            "text": quoted.get("text") or quoted.get("full_text") or quoted_legacy.get("full_text") or "",
+            "author_username": (
+                quoted_author.get("username")
+                or quoted_author.get("screen_name")
+                or quoted.get("author_username")
+                or ""
+            ),
+            "author_name": quoted_author.get("name") or quoted.get("author_name") or "",
+        }
+
+    def _parse_tweet(self, tweet: dict) -> Optional[Tweet]:
+        """Normalize bird tweet payload to local Tweet model."""
+        tweet_id = str(tweet.get("id") or tweet.get("id_str") or tweet.get("rest_id") or "")
+        if not tweet_id:
+            return None
+
+        author = tweet.get("author", {}) if isinstance(tweet.get("author"), dict) else {}
+        legacy = tweet.get("legacy", {}) if isinstance(tweet.get("legacy"), dict) else {}
+        text = tweet.get("text") or tweet.get("full_text") or tweet.get("fullText") or legacy.get("full_text") or ""
+
+        return Tweet(
+            id=tweet_id,
+            text=text,
+            author_username=(
+                author.get("username")
+                or author.get("screen_name")
+                or tweet.get("author_username")
+                or tweet.get("username")
+                or ""
+            ),
+            author_name=author.get("name") or tweet.get("author_name") or "",
+            created_at=tweet.get("created_at") or tweet.get("createdAt") or legacy.get("created_at") or "",
+            urls=self._extract_urls(tweet),
+            media_urls=self._extract_media_urls(tweet),
+            quote_tweet=self._parse_quote_tweet(tweet),
+            reply_to_id=(
+                tweet.get("in_reply_to_status_id_str")
+                or tweet.get("reply_to_id")
+                or legacy.get("in_reply_to_status_id_str")
+            ),
+            bookmark_timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    @staticmethod
+    def _extract_tweet_items(payload: object) -> list[dict]:
+        """Extract tweet objects from bird JSON output."""
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+
+        if isinstance(payload, dict):
+            for key in ("tweets", "data"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+            # Some bird commands return a single object
+            if payload.get("id") or payload.get("rest_id"):
+                return [payload]
+
+        raise ValueError("Unexpected bird output format")
+
+    def fetch_bookmarks(
+        self,
+        max_count: int = 0,
+        since_id: Optional[str] = None,
+    ) -> list[Tweet]:
+        """Fetch bookmarks from bird."""
+        command = self._build_command(max_count=max_count, since_id=since_id)
+        console.print("[blue]Fetching bookmarks using bird CLI...[/blue]")
+
+        try:
+            result = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as e:
+            raise RuntimeError("bird CLI not installed") from e
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            raise RuntimeError(f"bird command failed: {stderr or e}") from e
+
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            return []
+
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError("bird returned non-JSON output") from e
+
+        items = self._extract_tweet_items(payload)
+        tweets = []
+        for item in items:
+            tweet = self._parse_tweet(item)
+            if not tweet:
+                continue
+
+            if since_id and tweet.id == since_id:
+                break
+
+            tweets.append(tweet)
+
+            if max_count > 0 and len(tweets) >= max_count:
+                break
+
+        console.print(f"[green]Fetched {len(tweets)} bookmarks via bird[/green]")
+        return tweets
 
 
 class BookmarkScraper:
@@ -304,18 +557,7 @@ class BookmarkScraper:
 
     def save_raw_data(self, tweets: list[Tweet], filename: Optional[str] = None):
         """Save raw tweet data for debugging/reference."""
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"bookmarks_{timestamp}.json"
-
-        raw_dir = DATA_DIR / "raw"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-
-        filepath = raw_dir / filename
-        with open(filepath, "w") as f:
-            json.dump([asdict(t) for t in tweets], f, indent=2)
-
-        console.print(f"[dim]Saved raw data to {filepath}[/dim]")
+        save_raw_tweets(tweets, filename=filename)
 
 
 def get_new_bookmarks(
@@ -334,16 +576,22 @@ def get_new_bookmarks(
     Returns:
         List of new Tweet objects
     """
-    scraper = BookmarkScraper()
-
     # Get the most recent processed ID to use as stopping point
     since_id = processed_ids[0] if processed_ids else None
 
-    # Fetch bookmarks
-    all_tweets = asyncio.run(scraper.fetch_bookmarks(
-        max_count=max_count,
-        since_id=since_id,
-    ))
+    # Primary fetch path: bird CLI
+    try:
+        all_tweets = BirdBookmarkScraper().fetch_bookmarks(
+            max_count=max_count,
+            since_id=since_id,
+        )
+    except Exception as bird_error:
+        console.print(f"[yellow]bird fetch failed ({bird_error}). Falling back to built-in scraper...[/yellow]")
+        scraper = BookmarkScraper()
+        all_tweets = asyncio.run(scraper.fetch_bookmarks(
+            max_count=max_count,
+            since_id=since_id,
+        ))
 
     # Filter out already processed
     processed_set = set(processed_ids)
@@ -361,16 +609,28 @@ def get_new_bookmarks(
                     tweet.created_at,
                     "%a %b %d %H:%M:%S %z %Y"
                 )
+            except ValueError:
+                # Try ISO-like timestamps from alternate scrapers
+                try:
+                    from dateutil import parser as date_parser
+                    tweet_date = date_parser.parse(tweet.created_at)
+                except Exception:
+                    # If we can't parse the date, include it anyway
+                    filtered.append(tweet)
+                    continue
+
+            try:
                 if tweet_date >= cutoff:
                     filtered.append(tweet)
-            except ValueError:
-                # If we can't parse the date, include it anyway
-                filtered.append(tweet)
+            except TypeError:
+                # Naive datetime fallback
+                if tweet_date.replace(tzinfo=timezone.utc) >= cutoff:
+                    filtered.append(tweet)
         new_tweets = filtered
 
     # Save raw data
     if new_tweets:
-        scraper.save_raw_data(new_tweets)
+        save_raw_tweets(new_tweets)
 
     console.print(f"[green]Found {len(new_tweets)} new bookmarks to process[/green]")
     return new_tweets

@@ -5,6 +5,7 @@ Clusters content by topic and generates adaptive-depth research using AI.
 """
 
 import json
+import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -36,7 +37,17 @@ class ResearchOutput:
 class AIResearcher:
     """Generates AI research from parsed bookmarks."""
 
+    GROUNDING_RULES = """Grounding rules (IMPORTANT):
+- Prefer the provided bookmarked content (tweets + extracted linked content) as your primary evidence.
+- If you use tools (e.g. WebSearch/WebFetch), you MUST:
+  1) only make claims supported by what you actually saw
+  2) include a short "Sources" section with URLs for any non-trivial factual claims
+- Do NOT invent facts. If evidence is insufficient or contradictory, say so explicitly.
+"""
+
     CLUSTERING_PROMPT = """You are organizing bookmarked content into coherent topics for a weekly research digest.
+
+{grounding_rules}
 
 Analyze the following bookmarked tweets and their linked content. Group them into 3-7 logical topic clusters.
 For each cluster, determine if the topic is:
@@ -60,6 +71,8 @@ Bookmarks to organize:
 """
 
     RESEARCH_PROMPT = """You are a knowledgeable researcher creating a learning digest.
+
+{grounding_rules}
 
 Write a comprehensive research section for this topic: "{topic_name}"
 Topic description: {topic_description}
@@ -86,6 +99,8 @@ If there are linked articles, incorporate their insights.
 Output the research content directly (no JSON, just markdown text)."""
 
     SUMMARY_PROMPT = """Based on the following topic summaries from this week's bookmarks, write a brief executive summary (2-3 paragraphs) that:
+{grounding_rules}
+
 1. Highlights the main themes across all topics
 2. Notes any interesting patterns or connections
 3. Suggests which topics deserve the reader's attention first
@@ -100,11 +115,66 @@ Write the executive summary directly in markdown."""
         provider: str = "anthropic",
         model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 8192,
+        claude_cli_tools: Optional[str] = None,
+        claude_cli_permission_mode: Optional[str] = "bypassPermissions",
+        claude_cli_dangerously_skip_permissions: bool = True,
     ):
         self.provider = provider
         self.model = model
         self.max_tokens = max_tokens
+        self.claude_cli_tools = claude_cli_tools
+        self.claude_cli_permission_mode = claude_cli_permission_mode
+        self.claude_cli_dangerously_skip_permissions = claude_cli_dangerously_skip_permissions
         self._client = None
+
+    def _call_claude_cli(self, prompt: str) -> str:
+        """
+        Call Claude Code CLI in non-interactive mode.
+
+        This is intended for automation using a Claude subscription (no API key).
+        We disable tools and bypass permissions to ensure fully unattended runs.
+        """
+        command: list[str] = [
+            "claude",
+            "-p",
+            "--model",
+            self.model,
+            "--output-format",
+            "text",
+            "--no-session-persistence",
+        ]
+
+        # Tools:
+        # - None: omit flag entirely (Claude Code default tool set; "all tools")
+        # - "default": explicit default tool set
+        # - "": disable all tools
+        if self.claude_cli_tools is not None:
+            command.extend(["--tools", self.claude_cli_tools])
+
+        if self.claude_cli_permission_mode is not None:
+            command.extend(["--permission-mode", self.claude_cli_permission_mode])
+
+        # Fully unattended automation: bypass permission prompts.
+        if self.claude_cli_dangerously_skip_permissions:
+            command.append("--allow-dangerously-skip-permissions")
+            command.append("--dangerously-skip-permissions")
+
+        try:
+            result = subprocess.run(
+                command + [prompt],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as e:
+            raise RuntimeError("claude CLI not found. Install Claude Code and ensure `claude` is on PATH.") from e
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            stdout = (e.stdout or "").strip()
+            detail = stderr or stdout or str(e)
+            raise RuntimeError(f"claude CLI call failed: {detail}") from e
+
+        return (result.stdout or "").strip()
 
     def _get_client(self):
         """Get or create the AI client."""
@@ -121,6 +191,9 @@ Write the executive summary directly in markdown."""
 
     def _call_ai(self, prompt: str, max_tokens: Optional[int] = None) -> str:
         """Make an AI API call."""
+        if self.provider in ("claude_cli", "claude"):
+            return self._call_claude_cli(prompt)
+
         client = self._get_client()
         tokens = max_tokens or self.max_tokens
 
@@ -163,7 +236,7 @@ Write the executive summary directly in markdown."""
         for i, bookmark in enumerate(bookmarks):
             summaries.append(self._prepare_bookmark_summary(bookmark, i))
 
-        prompt = self.CLUSTERING_PROMPT + "\n\n" + "\n\n".join(summaries)
+        prompt = self.CLUSTERING_PROMPT.format(grounding_rules=self.GROUNDING_RULES) + "\n\n" + "\n\n".join(summaries)
 
         try:
             response = self._call_ai(prompt, max_tokens=2000)
@@ -221,6 +294,7 @@ Write the executive summary directly in markdown."""
             content = content[:50000] + "\n\n[Content truncated for length...]"
 
         prompt = self.RESEARCH_PROMPT.format(
+            grounding_rules=self.GROUNDING_RULES,
             topic_name=cluster.name,
             topic_description=cluster.description,
             complexity=cluster.complexity,
@@ -249,7 +323,10 @@ Write the executive summary directly in markdown."""
             if c.research
         ])
 
-        prompt = self.SUMMARY_PROMPT.format(topics=topics_text)
+        prompt = self.SUMMARY_PROMPT.format(
+            grounding_rules=self.GROUNDING_RULES,
+            topics=topics_text,
+        )
         return self._call_ai(prompt, max_tokens=1500)
 
     def collect_links(self, clusters: list[TopicCluster]) -> list[dict]:
@@ -306,19 +383,28 @@ def research_bookmarks(
     bookmarks: list[ParsedBookmark],
     provider: str = "anthropic",
     model: str = "claude-sonnet-4-20250514",
+    claude_cli_tools: Optional[str] = "default",
+    claude_cli_permission_mode: str = "bypassPermissions",
+    claude_cli_dangerously_skip_permissions: bool = True,
 ) -> ResearchOutput:
     """
     Convenience function to run research on bookmarks.
 
     Args:
         bookmarks: List of ParsedBookmark objects
-        provider: AI provider (anthropic or openai)
+        provider: AI provider (anthropic, openai, or claude_cli)
         model: Model name to use
 
     Returns:
         ResearchOutput with all research content
     """
-    researcher = AIResearcher(provider=provider, model=model)
+    researcher = AIResearcher(
+        provider=provider,
+        model=model,
+        claude_cli_tools=claude_cli_tools,
+        claude_cli_permission_mode=claude_cli_permission_mode,
+        claude_cli_dangerously_skip_permissions=claude_cli_dangerously_skip_permissions,
+    )
     return researcher.research(bookmarks)
 
 

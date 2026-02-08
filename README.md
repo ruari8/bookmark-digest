@@ -6,7 +6,7 @@ Automated system that reads your X bookmarks weekly, extracts linked content, us
 
 ## Overview
 
-**Pipeline:** X Bookmarks → Content Extraction → AI Research → Markdown/PDF → (Optional) Podcast
+**Pipeline:** X Bookmarks → Content Extraction → AI Research → Markdown/PDF → Email Delivery → (Optional) Podcast
 
 Instead of letting bookmarks pile up unread, Bookmark Digest processes them into actionable knowledge. The AI clusters related content, determines appropriate depth for each topic, and synthesizes research that goes beyond simple summarization.
 
@@ -21,8 +21,8 @@ Instead of letting bookmarks pile up unread, Bookmark Digest processes them into
 └─────────────────┘     └──────────────────┘     └─────────────────┘     └──────────────────┘
         │                       │                        │                       │
         ▼                       ▼                        ▼                       ▼
-   Cookie Auth            trafilatura             Claude/GPT              pandoc/TTS
-   GraphQL API            httpx fetch             Topic Clustering        NotebookLM
+   Bird CLI + Cookie      trafilatura             Claude/GPT              pandoc/TTS
+   GraphQL Fallback       httpx fetch             Topic Clustering        NotebookLM
 ```
 
 ### Component Flow
@@ -35,8 +35,8 @@ flowchart TB
     end
 
     subgraph Scraper["scraper.py"]
-        S1[Cookie Auth]
-        S2[GraphQL API]
+        S1[Bird CLI (Primary)]
+        S2[Internal GraphQL (Fallback)]
         S3[Tweet Parser]
     end
 
@@ -58,16 +58,18 @@ flowchart TB
         R6[Executive Summary]
     end
 
-    subgraph Generator["generator.py + audio.py"]
+    subgraph Generator["generator.py + audio.py + emailer.py"]
         G1[Markdown Output]
         G2[PDF via pandoc]
+        G5[Gmail SMTP Email]
         G3[TTS Audio]
         G4[NotebookLM Ready]
     end
 
     X --> S1
     C --> S1
-    S1 --> S2 --> S3
+    S1 --> S3
+    S1 -.failure.-> S2 --> S3
 
     S3 --> P1
     P1 --> P2
@@ -85,6 +87,7 @@ flowchart TB
 
     R6 --> G1
     G1 --> G2
+    G1 --> G5
     G1 --> G3
     G1 --> G4
 ```
@@ -104,10 +107,15 @@ sequenceDiagram
     Run->>Run: Load config & processed IDs
 
     Run->>Scraper: get_new_bookmarks()
-    Scraper->>Scraper: Load cookies
-    Scraper->>X: GraphQL Bookmarks API
-    X-->>Scraper: Tweet data + URLs
-    Scraper-->>Run: List[Tweet]
+    Scraper->>Scraper: Try bird CLI (bookmarks --json)
+    alt bird succeeds
+        Scraper-->>Run: List[Tweet]
+    else bird fails
+        Scraper->>Scraper: Load cookies
+        Scraper->>X: GraphQL Bookmarks API
+        X-->>Scraper: Tweet data + URLs
+        Scraper-->>Run: List[Tweet]
+    end
 
     Run->>Parser: parse_bookmarks(tweets)
     loop For each URL
@@ -133,6 +141,7 @@ sequenceDiagram
     Gen->>Gen: Optional: pandoc PDF
     Gen-->>Run: File paths
 
+    Run->>Run: Optional: send digest email (PDF preferred)
     Run->>Run: Save processed IDs
     Run-->>User: Done! Files saved
 ```
@@ -228,11 +237,30 @@ cd bookmark-digest
 # Install dependencies
 pip install -r requirements.txt
 
+# Install bird CLI (recommended primary scraper)
+# npm:
+npm install -g @steipete/bird
+# or Homebrew:
+# brew install steipete/tap/bird
+
 # Set up your X cookies (see below)
 cp config/cookies.example.json config/cookies.json
 
-# Set your AI API key
-export ANTHROPIC_API_KEY="your-key-here"
+# AI setup (choose one)
+#
+# Recommended (no API keys, uses Claude subscription via Claude Code CLI):
+# 1) Install/login to Claude Code
+# 2) Ensure this works (unattended, default tool set enabled):
+#    claude -p --model opus --permission-mode bypassPermissions --allow-dangerously-skip-permissions --dangerously-skip-permissions "Reply with exactly: OK"
+#
+# API options (separately billed):
+# export ANTHROPIC_API_KEY="your-key-here"
+# or
+# export OPENAI_API_KEY="your-key-here"
+
+# Optional but recommended for email delivery
+export GMAIL_SMTP_USERNAME="your-digest-bot@gmail.com"
+export GMAIL_SMTP_APP_PASSWORD="your-16-char-app-password"
 
 # Run
 python run.py
@@ -259,6 +287,9 @@ The scraper authenticates using your browser session cookies. Here's how to get 
 ```
 
 > **Note:** Cookies expire every 2-4 weeks. Refresh them when you see a 401 error.
+>
+> The app now uses `bird` as primary and falls back to built-in GraphQL scraping.
+> If `bird` is missing or fails, cookie-based fallback still works.
 
 ## Usage
 
@@ -289,6 +320,12 @@ python run.py --notebooklm
 
 # Dry run - fetch bookmarks but don't generate documents
 python run.py --dry-run
+
+# Send digest email using config recipients
+python run.py --email
+
+# Override recipients for a manual test run
+python run.py --email --email-to "me@example.com"
 ```
 
 ## Configuration
@@ -304,9 +341,12 @@ output:
 
 # AI settings
 ai:
-  provider: "anthropic"         # anthropic or openai
-  model: "claude-sonnet-4-20250514"  # Model for research
+  provider: "claude_cli"        # claude_cli (Claude subscription), anthropic (API), openai (API)
+  model: "opus"                 # Opus 4.6 (Claude Code alias)
   max_tokens: 8192
+  claude_cli_tools: null        # omit --tools flag (Claude default tool set; "all tools")
+  claude_cli_permission_mode: "bypassPermissions"
+  claude_cli_dangerously_skip_permissions: true
 
 # Scraper settings
 scraper:
@@ -318,7 +358,52 @@ audio:
   enabled: false
   provider: "openai"            # openai or elevenlabs
   voice: "alloy"                # OpenAI: alloy, echo, fable, onyx, nova, shimmer
+
+# Email settings
+email:
+  enabled: true
+  provider: "gmail_smtp"
+  from_address: "your-digest-bot@gmail.com"
+  to_addresses:
+    - "your-main-email@gmail.com"
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_username_env: "GMAIL_SMTP_USERNAME"
+  smtp_password_env: "GMAIL_SMTP_APP_PASSWORD"
+  attach_preferred: "pdf"      # pdf | markdown
+  attach_fallback: "markdown"  # markdown | none
+  send_on_empty: true
+  subject_prefix: "Bookmark Digest"
 ```
+
+## Email Delivery (Gmail SMTP)
+
+This repo can email the weekly digest using Gmail SMTP.
+
+### One-time Gmail setup
+
+1. Create/sign in to a dedicated sender Gmail account.
+2. Enable 2-Step Verification on that account.
+3. Create an App Password (Google Account → Security → App passwords).
+4. Set environment variables:
+
+```bash
+export GMAIL_SMTP_USERNAME="your-digest-bot@gmail.com"
+export GMAIL_SMTP_APP_PASSWORD="your-16-char-app-password"
+```
+
+5. Update `config/config.yaml` email `from_address` and `to_addresses`.
+
+### Manual verification (full pipeline)
+
+```bash
+python run.py --output-format pdf --email --force --max-bookmarks 5
+```
+
+Expected behavior:
+- PDF attached when generated.
+- Markdown attached if PDF generation fails.
+- If no new bookmarks, status email is sent (if `send_on_empty: true`).
 
 ## Scheduling
 
@@ -327,6 +412,14 @@ audio:
 ```bash
 # Install the launch agent
 cp config/com.bookmark-digest.plist ~/Library/LaunchAgents/
+
+# Set required env vars for launchd (persist for your user session)
+# If using claude_cli (default), no AI API key is required.
+# If using API providers, set the key(s) here for launchd:
+# launchctl setenv ANTHROPIC_API_KEY "sk-ant-..."
+# launchctl setenv OPENAI_API_KEY "sk-..."
+launchctl setenv GMAIL_SMTP_USERNAME "your-digest-bot@gmail.com"
+launchctl setenv GMAIL_SMTP_APP_PASSWORD "your-16-char-app-password"
 
 # Load (start scheduling)
 launchctl load ~/Library/LaunchAgents/com.bookmark-digest.plist
@@ -342,6 +435,7 @@ tail -f data/launchd.log
 ```
 
 Default schedule: **Sundays at 8:00 AM**
+The provided plist runs `run.py --output-format pdf --email`.
 
 ### Linux (cron)
 
@@ -399,25 +493,32 @@ The Rust web framework ecosystem continues to evolve...
 | Component | Technology |
 |-----------|------------|
 | Language | Python 3.11+ |
-| X Scraping | `httpx` + cookie auth |
+| X Scraping | `bird` CLI (primary) + `httpx` cookie GraphQL fallback |
 | Article Extraction | `trafilatura` |
 | AI Research | Anthropic Claude / OpenAI GPT |
 | PDF Generation | `pandoc` |
 | TTS | OpenAI TTS API / ElevenLabs |
+| Email | Gmail SMTP |
 | CLI Framework | `click` |
 | Scheduling | `launchd` (macOS) / `cron` |
 
 ## Environment Variables
 
 ```bash
-# Required for AI features
-export ANTHROPIC_API_KEY="sk-ant-..."   # For Claude models
-# OR
-export OPENAI_API_KEY="sk-..."          # For GPT models
+# AI (pick one)
+#
+# Default: Claude subscription via Claude Code CLI (no API keys needed).
+# For API usage (separately billed), set one of:
+# export ANTHROPIC_API_KEY="sk-ant-..."
+# export OPENAI_API_KEY="sk-..."
 
 # Optional for audio
 export OPENAI_API_KEY="sk-..."          # For OpenAI TTS
 export ELEVENLABS_API_KEY="..."         # For ElevenLabs TTS
+
+# Required for Gmail SMTP delivery (if email enabled)
+export GMAIL_SMTP_USERNAME="your-digest-bot@gmail.com"
+export GMAIL_SMTP_APP_PASSWORD="your-16-char-app-password"
 ```
 
 ## Troubleshooting
@@ -425,10 +526,15 @@ export ELEVENLABS_API_KEY="..."         # For ElevenLabs TTS
 | Issue | Solution |
 |-------|----------|
 | `401 Unauthorized` | X cookies expired. Get fresh ones from browser DevTools. |
+| `bird fetch failed` | Install `bird` CLI or fix bird auth; app will fall back automatically. |
 | `No bookmarks found` | Check that you have bookmarks on X and cookies are correct. |
 | `PDF generation failed` | Install pandoc: `brew install pandoc` |
+| `Email attachment error` | PDF/Markdown output file missing; verify output generation path and permissions. |
+| `Email delivery failed` | Check Gmail app password, SMTP env vars, and recipient config. |
+| `Failed to send status email` | SMTP auth/config issue when run had no bookmarks; verify env vars and Gmail settings. |
 | `Audio generation failed` | Check your OpenAI API key is set and has credits. |
-| `ANTHROPIC_API_KEY not set` | Export the environment variable or add to `.env` |
+| `claude CLI call failed` | Ensure Claude Code is logged in and `ai.model` is valid (e.g. `opus`). |
+| `ANTHROPIC_API_KEY not set` | Only relevant if you set `ai.provider: anthropic`. |
 
 ## Development
 

@@ -8,11 +8,19 @@ output:
 
 # AI Research settings
 ai:
-  provider: "anthropic"  # anthropic or openai
-  model: "claude-sonnet-4-20250514"
+  provider: "claude_cli"  # claude_cli (Claude Code subscription), anthropic (API), or openai (API)
+  model: "opus"  # Opus 4.6 (via Claude Code alias)
   # For complex research, use a more capable model
-  research_model: "claude-sonnet-4-20250514"
+  research_model: "opus"
   max_tokens: 8192
+  # Claude Code CLI settings for unattended automation:
+  # Tools:
+  # - null: omit --tools flag (Claude Code default tool set; "all tools")
+  # - "default": explicit default tool set
+  # - "": disables all tools (no web research)
+  claude_cli_tools: null
+  claude_cli_permission_mode: "bypassPermissions"
+  claude_cli_dangerously_skip_permissions: true
 
 # Content extraction
 parser:
@@ -36,6 +44,22 @@ audio:
   provider: "openai"  # openai or elevenlabs
   voice: "alloy"  # OpenAI voices: alloy, echo, fable, onyx, nova, shimmer
   output_format: "mp3"
+
+# Email delivery settings
+email:
+  enabled: true
+  provider: "gmail_smtp"
+  from_address: "your-digest-bot@gmail.com"
+  to_addresses:
+    - "your-main-email@gmail.com"
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_username_env: "GMAIL_SMTP_USERNAME"
+  smtp_password_env: "GMAIL_SMTP_APP_PASSWORD"
+  attach_preferred: "pdf"      # pdf | markdown
+  attach_fallback: "markdown"  # markdown | none
+  send_on_empty: true
+  subject_prefix: "Bookmark Digest"
 
 # Scheduling (for reference - actual scheduling done via launchd/cron)
 schedule:
