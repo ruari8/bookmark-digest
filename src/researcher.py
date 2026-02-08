@@ -132,7 +132,8 @@ Write the executive summary directly in markdown."""
         Call Claude Code CLI in non-interactive mode.
 
         This is intended for automation using a Claude subscription (no API key).
-        We disable tools and bypass permissions to ensure fully unattended runs.
+        Tool/permission behavior is controlled by `claude_cli_tools`,
+        `claude_cli_permission_mode`, and `claude_cli_dangerously_skip_permissions`.
         """
         command: list[str] = [
             "claude",

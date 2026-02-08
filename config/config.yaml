@@ -13,14 +13,17 @@ ai:
   # For complex research, use a more capable model
   research_model: "opus"
   max_tokens: 8192
-  # Claude Code CLI settings for unattended automation:
+  # Claude Code CLI settings (safer defaults for cron):
   # Tools:
-  # - null: omit --tools flag (Claude Code default tool set; "all tools")
+  # - "": disables all tools (recommended; avoids prompt-injection turning into actions)
+  # - null: omit --tools flag (Claude Code default tool set; may include powerful tools)
   # - "default": explicit default tool set
-  # - "": disables all tools (no web research)
-  claude_cli_tools: null
-  claude_cli_permission_mode: "bypassPermissions"
-  claude_cli_dangerously_skip_permissions: true
+  claude_cli_tools: ""
+  # Permission mode:
+  # - null: don't pass --permission-mode at all
+  # - "bypassPermissions": unattended, but riskier if tools are enabled
+  claude_cli_permission_mode: null
+  claude_cli_dangerously_skip_permissions: false
 
 # Content extraction
 parser:
@@ -47,7 +50,7 @@ audio:
 
 # Email delivery settings
 email:
-  enabled: true
+  enabled: false
   provider: "gmail_smtp"
   from_address: "your-digest-bot@gmail.com"
   to_addresses:
@@ -58,7 +61,7 @@ email:
   smtp_password_env: "GMAIL_SMTP_APP_PASSWORD"
   attach_preferred: "pdf"      # pdf | markdown
   attach_fallback: "markdown"  # markdown | none
-  send_on_empty: true
+  send_on_empty: false
   subject_prefix: "Bookmark Digest"
 
 # Scheduling (for reference - actual scheduling done via launchd/cron)

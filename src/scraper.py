@@ -57,32 +57,6 @@ def save_raw_tweets(tweets: list[Tweet], filename: Optional[str] = None):
 class BirdBookmarkScraper:
     """Fetches bookmarks using the bird CLI (primary scraper)."""
 
-    def __init__(self, cookies_path: Optional[Path] = None):
-        self.cookies_path = cookies_path or CONFIG_DIR / "cookies.json"
-        self.cookies = self._load_optional_cookies()
-
-    def _load_optional_cookies(self) -> Optional[dict]:
-        """Load cookies if available so bird can run without browser profile setup."""
-        if not self.cookies_path.exists():
-            return None
-
-        try:
-            with open(self.cookies_path) as f:
-                cookies = json.load(f)
-        except Exception:
-            return None
-
-        required = ("auth_token", "ct0")
-        if all(
-            key in cookies
-            and isinstance(cookies[key], str)
-            and cookies[key]
-            and not cookies[key].startswith("YOUR_")
-            for key in required
-        ):
-            return {key: cookies[key] for key in required}
-        return None
-
     def _build_command(self, max_count: int, since_id: Optional[str]) -> list[str]:
         """Build bird CLI command."""
         command = ["bird", "bookmarks", "--json", "--plain"]
@@ -92,10 +66,6 @@ class BirdBookmarkScraper:
             command.append("--all")
         else:
             command.extend(["-n", str(max_count)])
-
-        # Prefer explicit cookie auth (if present) over browser-profile auth.
-        if self.cookies:
-            command.extend(["--auth-token", self.cookies["auth_token"], "--ct0", self.cookies["ct0"]])
 
         return command
 

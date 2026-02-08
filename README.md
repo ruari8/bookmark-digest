@@ -6,7 +6,7 @@ Automated system that reads your X bookmarks weekly, extracts linked content, us
 
 ## Overview
 
-**Pipeline:** X Bookmarks → Content Extraction → AI Research → Markdown/PDF → Email Delivery → (Optional) Podcast
+**Pipeline:** X Bookmarks → Content Extraction → AI Research → Markdown/PDF → (Optional) Email Delivery → (Optional) Podcast
 
 Instead of letting bookmarks pile up unread, Bookmark Digest processes them into actionable knowledge. The AI clusters related content, determines appropriate depth for each topic, and synthesizes research that goes beyond simple summarization.
 
@@ -258,7 +258,7 @@ cp config/cookies.example.json config/cookies.json
 # or
 # export OPENAI_API_KEY="your-key-here"
 
-# Optional but recommended for email delivery
+# Optional for email delivery
 export GMAIL_SMTP_USERNAME="your-digest-bot@gmail.com"
 export GMAIL_SMTP_APP_PASSWORD="your-16-char-app-password"
 
@@ -344,9 +344,9 @@ ai:
   provider: "claude_cli"        # claude_cli (Claude subscription), anthropic (API), openai (API)
   model: "opus"                 # Opus 4.6 (Claude Code alias)
   max_tokens: 8192
-  claude_cli_tools: null        # omit --tools flag (Claude default tool set; "all tools")
-  claude_cli_permission_mode: "bypassPermissions"
-  claude_cli_dangerously_skip_permissions: true
+  claude_cli_tools: ""          # recommended: disable tools for unattended cron runs
+  claude_cli_permission_mode: null
+  claude_cli_dangerously_skip_permissions: false
 
 # Scraper settings
 scraper:
@@ -361,7 +361,7 @@ audio:
 
 # Email settings
 email:
-  enabled: true
+  enabled: false
   provider: "gmail_smtp"
   from_address: "your-digest-bot@gmail.com"
   to_addresses:
@@ -372,7 +372,7 @@ email:
   smtp_password_env: "GMAIL_SMTP_APP_PASSWORD"
   attach_preferred: "pdf"      # pdf | markdown
   attach_fallback: "markdown"  # markdown | none
-  send_on_empty: true
+  send_on_empty: false
   subject_prefix: "Bookmark Digest"
 ```
 
