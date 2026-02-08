@@ -117,7 +117,7 @@ Write the executive summary directly in markdown."""
         max_tokens: int = 8192,
         claude_cli_tools: Optional[str] = None,
         claude_cli_permission_mode: Optional[str] = "bypassPermissions",
-        claude_cli_dangerously_skip_permissions: bool = True,
+        claude_cli_dangerously_skip_permissions: bool = False,
     ):
         self.provider = provider
         self.model = model
@@ -149,6 +149,7 @@ Write the executive summary directly in markdown."""
         # - None: omit flag entirely (Claude Code default tool set; "all tools")
         # - "default": explicit default tool set
         # - "": disable all tools
+        # - "WebSearch,WebFetch": web-only discovery/research
         if self.claude_cli_tools is not None:
             command.extend(["--tools", self.claude_cli_tools])
 
@@ -386,7 +387,7 @@ def research_bookmarks(
     model: str = "claude-sonnet-4-20250514",
     claude_cli_tools: Optional[str] = "default",
     claude_cli_permission_mode: str = "bypassPermissions",
-    claude_cli_dangerously_skip_permissions: bool = True,
+    claude_cli_dangerously_skip_permissions: bool = False,
 ) -> ResearchOutput:
     """
     Convenience function to run research on bookmarks.

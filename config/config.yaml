@@ -15,14 +15,15 @@ ai:
   max_tokens: 8192
   # Claude Code CLI settings (safer defaults for cron):
   # Tools:
-  # - "": disables all tools (recommended; avoids prompt-injection turning into actions)
-  # - null: omit --tools flag (Claude Code default tool set; may include powerful tools)
-  # - "default": explicit default tool set
-  claude_cli_tools: ""
+  # - "WebSearch,WebFetch": recommended for unattended research (web-only discovery)
+  # - "": disables all tools (bookmark-only; no web research)
+  # - null: omit --tools flag (Claude Code default tool set; may include powerful tools like Bash/Read/Edit)
+  # - "default": explicit default tool set (typically includes Bash/Read/Edit)
+  claude_cli_tools: "WebSearch,WebFetch"
   # Permission mode:
+  # - "bypassPermissions": unattended (recommended when using web-only tools)
   # - null: don't pass --permission-mode at all
-  # - "bypassPermissions": unattended, but riskier if tools are enabled
-  claude_cli_permission_mode: null
+  claude_cli_permission_mode: "bypassPermissions"
   claude_cli_dangerously_skip_permissions: false
 
 # Content extraction

@@ -246,7 +246,7 @@ def main(
         model=ai_config.get("model", "claude-sonnet-4-20250514"),
         claude_cli_tools=ai_config.get("claude_cli_tools", None),
         claude_cli_permission_mode=ai_config.get("claude_cli_permission_mode", "bypassPermissions"),
-        claude_cli_dangerously_skip_permissions=ai_config.get("claude_cli_dangerously_skip_permissions", True),
+        claude_cli_dangerously_skip_permissions=ai_config.get("claude_cli_dangerously_skip_permissions", False),
     )
 
     # Step 4: Generate document

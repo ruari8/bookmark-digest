@@ -32,6 +32,25 @@ class ResearcherClaudeCliTests(unittest.TestCase):
         self.assertIn("--dangerously-skip-permissions", args)
         self.assertIn("--permission-mode", args)
 
+    @patch("subprocess.run")
+    def test_claude_cli_invocation_allows_web_tools_when_configured(self, run_mock: MagicMock):
+        run_mock.return_value = MagicMock(stdout="OK\n")
+        researcher = AIResearcher(
+            provider="claude_cli",
+            model="opus",
+            claude_cli_tools="WebSearch,WebFetch",
+            claude_cli_permission_mode="bypassPermissions",
+            claude_cli_dangerously_skip_permissions=False,
+        )
+        out = researcher._call_ai("Reply OK")
+
+        self.assertEqual(out, "OK")
+        args = run_mock.call_args[0][0]
+        self.assertIn("--tools", args)
+        tools_index = args.index("--tools") + 1
+        self.assertEqual(args[tools_index], "WebSearch,WebFetch")
+        self.assertNotIn("--dangerously-skip-permissions", args)
+
 
 if __name__ == "__main__":
     unittest.main()

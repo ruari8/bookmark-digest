@@ -344,8 +344,8 @@ ai:
   provider: "claude_cli"        # claude_cli (Claude subscription), anthropic (API), openai (API)
   model: "opus"                 # Opus 4.6 (Claude Code alias)
   max_tokens: 8192
-  claude_cli_tools: ""          # recommended: disable tools for unattended cron runs
-  claude_cli_permission_mode: null
+  claude_cli_tools: "WebSearch,WebFetch"  # recommended: web-only discovery research
+  claude_cli_permission_mode: "bypassPermissions"
   claude_cli_dangerously_skip_permissions: false
 
 # Scraper settings
