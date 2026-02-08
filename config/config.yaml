@@ -32,8 +32,6 @@ parser:
   max_articles: 50
   # Timeout for fetching URLs (seconds)
   fetch_timeout: 30
-  # Extract full thread for tweet replies
-  extract_threads: true
 
 # Scraper settings
 scraper:

@@ -235,6 +235,7 @@ def main(
     parsed = parse_bookmarks(
         tweets,
         timeout=parser_config.get("fetch_timeout", 30),
+        max_articles=parser_config.get("max_articles", 50),
     )
 
     # Step 3: AI Research

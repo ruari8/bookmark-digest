@@ -284,6 +284,7 @@ class ContentParser:
 
         parsed = []
         total_urls = sum(len(t.urls) for t in tweets)
+        extracted_urls = 0
 
         console.print(f"[blue]Parsing {len(tweets)} bookmarks with {total_urls} linked URLs...[/blue]")
 
@@ -298,10 +299,18 @@ class ContentParser:
                 bookmark = ParsedBookmark(tweet=tweet)
 
                 # Extract content from each URL
+                if extracted_urls >= self.max_articles:
+                    parsed.append(bookmark)
+                    progress.advance(task)
+                    continue
+
                 for url in tweet.urls[:5]:  # Limit URLs per tweet
+                    if extracted_urls >= self.max_articles:
+                        break
                     progress.update(task, description=f"Extracting: {urlparse(url).netloc}...")
                     content = await self.extract_url(url)
                     bookmark.extracted_content.append(content)
+                    extracted_urls += 1
 
                 parsed.append(bookmark)
                 progress.advance(task)
@@ -315,18 +324,23 @@ class ContentParser:
         return parsed
 
 
-def parse_bookmarks(tweets: list[Tweet], timeout: int = 30) -> list[ParsedBookmark]:
+def parse_bookmarks(
+    tweets: list[Tweet],
+    timeout: int = 30,
+    max_articles: int = 50,
+) -> list[ParsedBookmark]:
     """
     Convenience function to parse bookmarks.
 
     Args:
         tweets: List of Tweet objects from scraper
         timeout: Request timeout in seconds
+        max_articles: Maximum number of linked URLs to extract across the whole run
 
     Returns:
         List of ParsedBookmark objects with extracted content
     """
-    parser = ContentParser(timeout=timeout)
+    parser = ContentParser(timeout=timeout, max_articles=max_articles)
     return asyncio.run(parser.parse_bookmarks(tweets))
 
 

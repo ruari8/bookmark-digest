@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>/Users/ruari/Documents/Startups/learn/bookmark-digest/.venv/bin/python</string>
         <string>/Users/ruari/Documents/Startups/learn/bookmark-digest/run.py</string>
         <string>--output-format</string>
         <string>pdf</string>
@@ -37,7 +37,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>

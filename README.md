@@ -219,7 +219,6 @@ bookmark-digest/
 - **GitHub**: README.md fetching from repositories
 - **arXiv**: Paper abstracts and metadata
 - **YouTube**: Video titles and descriptions
-- **Threads**: Full tweet thread extraction
 
 ### Output Formats
 - **Markdown**: Clean, readable format
@@ -234,7 +233,9 @@ bookmark-digest/
 git clone https://github.com/ruari8/bookmark-digest.git
 cd bookmark-digest
 
-# Install dependencies
+# Create a virtualenv and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
 # Install bird CLI (recommended primary scraper)
@@ -250,8 +251,8 @@ cp config/cookies.example.json config/cookies.json
 #
 # Recommended (no API keys, uses Claude subscription via Claude Code CLI):
 # 1) Install/login to Claude Code
-# 2) Ensure this works (unattended, default tool set enabled):
-#    claude -p --model opus --permission-mode bypassPermissions --allow-dangerously-skip-permissions --dangerously-skip-permissions "Reply with exactly: OK"
+# 2) Ensure this works (unattended, web-only research tools enabled):
+#    claude -p --model opus --tools "WebSearch,WebFetch" --permission-mode bypassPermissions "Reply with exactly: OK"
 #
 # API options (separately billed):
 # export ANTHROPIC_API_KEY="your-key-here"
@@ -288,8 +289,8 @@ The scraper authenticates using your browser session cookies. Here's how to get 
 
 > **Note:** Cookies expire every 2-4 weeks. Refresh them when you see a 401 error.
 >
-> The app now uses `bird` as primary and falls back to built-in GraphQL scraping.
-> If `bird` is missing or fails, cookie-based fallback still works.
+> The app tries `bird` as primary and falls back to built-in GraphQL scraping (cookie-based).
+> If `bird` is missing or not authenticated, cookie-based fallback still works.
 
 ## Usage
 
@@ -444,7 +445,7 @@ The provided plist runs `run.py --output-format pdf --email`.
 crontab -e
 
 # Add line for Sunday 8am
-0 8 * * 0 cd /path/to/bookmark-digest && /usr/bin/python3 run.py >> data/cron.log 2>&1
+0 8 * * 0 cd /path/to/bookmark-digest && .venv/bin/python run.py >> data/cron.log 2>&1
 ```
 
 ## Output Example

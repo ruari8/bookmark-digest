@@ -95,7 +95,7 @@ class DocumentGenerator:
         sections.append("""
 ---
 
-*This digest was automatically generated from your X bookmarks using [Bookmark Digest](https://github.com/youruser/bookmark-digest).*
+*This digest was automatically generated from your X bookmarks using [Bookmark Digest](https://github.com/ruari8/bookmark-digest).*
 """)
 
         return "\n".join(sections)
