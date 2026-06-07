@@ -37,6 +37,7 @@ console = Console()
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_DIR = PROJECT_ROOT / "config"
+ASSET_VERSION = "20260607-2"
 
 
 @dataclass
@@ -982,7 +983,7 @@ class StaticSiteBuilder:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html.escape(title)}</title>
   <meta name="description" content="{html.escape(self.site_description)}">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v={ASSET_VERSION}">
 </head>
 <body>
   <header class="site-header">
