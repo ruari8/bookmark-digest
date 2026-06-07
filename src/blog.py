@@ -9,6 +9,8 @@ This module owns the deterministic parts of the blog product:
 - persist checkpoints after a successful post
 """
 
+from __future__ import annotations
+
 import html
 import hashlib
 import json
