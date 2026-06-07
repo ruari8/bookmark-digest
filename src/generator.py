@@ -108,6 +108,7 @@ class DocumentGenerator:
         filepath = self.output_dir / filename
         content = self.generate_markdown(research)
 
+        filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)
         console.print(f"[green]Saved markdown: {filepath}[/green]")
 
@@ -181,7 +182,9 @@ class DocumentGenerator:
         results = {"markdown": None, "pdf": None}
 
         # Always generate markdown first
-        md_filename = filename + ".md" if filename else None
+        md_filename = None
+        if filename:
+            md_filename = filename if filename.endswith(".md") else f"{filename}.md"
         md_path = self.save_markdown(research, md_filename)
         results["markdown"] = md_path
 
@@ -200,6 +203,7 @@ def generate_document(
     research: ResearchOutput,
     output_dir: Optional[Path] = None,
     format: str = "markdown",
+    filename_template: str = "weekly-digest-{date}.md",
 ) -> dict[str, Optional[Path]]:
     """
     Convenience function to generate documents.
@@ -208,11 +212,12 @@ def generate_document(
         research: ResearchOutput from researcher
         output_dir: Directory to save files (default: learn/ folder)
         format: Output format ("markdown", "pdf", or "both")
+        filename_template: Template for generated filenames. Supports {date}.
 
     Returns:
         Dictionary with paths to generated files
     """
-    generator = DocumentGenerator(output_dir=output_dir)
+    generator = DocumentGenerator(output_dir=output_dir, filename_template=filename_template)
     return generator.save(research, format=format)
 
 

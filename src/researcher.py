@@ -6,7 +6,9 @@ Clusters content by topic and generates adaptive-depth research using AI.
 
 import json
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
@@ -14,6 +16,7 @@ from rich.console import Console
 from .parser import ParsedBookmark
 
 console = Console()
+PROJECT_ROOT = Path(__file__).parent.parent
 
 
 @dataclass
@@ -112,12 +115,17 @@ Write the executive summary directly in markdown."""
 
     def __init__(
         self,
-        provider: str = "anthropic",
-        model: str = "claude-sonnet-4-20250514",
+        provider: str = "codex_cli",
+        model: str = "gpt-5.5",
         max_tokens: int = 8192,
         claude_cli_tools: Optional[str] = None,
         claude_cli_permission_mode: Optional[str] = "bypassPermissions",
         claude_cli_dangerously_skip_permissions: bool = False,
+        codex_cli_search: bool = True,
+        codex_cli_sandbox: str = "read-only",
+        codex_cli_profile: Optional[str] = None,
+        codex_cli_ignore_user_config: bool = True,
+        codex_cli_reasoning_effort: Optional[str] = None,
     ):
         self.provider = provider
         self.model = model
@@ -125,6 +133,11 @@ Write the executive summary directly in markdown."""
         self.claude_cli_tools = claude_cli_tools
         self.claude_cli_permission_mode = claude_cli_permission_mode
         self.claude_cli_dangerously_skip_permissions = claude_cli_dangerously_skip_permissions
+        self.codex_cli_search = codex_cli_search
+        self.codex_cli_sandbox = codex_cli_sandbox
+        self.codex_cli_profile = codex_cli_profile
+        self.codex_cli_ignore_user_config = codex_cli_ignore_user_config
+        self.codex_cli_reasoning_effort = codex_cli_reasoning_effort
         self._client = None
 
     def _call_claude_cli(self, prompt: str) -> str:
@@ -178,6 +191,87 @@ Write the executive summary directly in markdown."""
 
         return (result.stdout or "").strip()
 
+    def _call_codex_cli(self, prompt: str) -> str:
+        """
+        Call Codex CLI in non-interactive mode.
+
+        This uses the local Codex authentication cache by default, including a
+        ChatGPT/Codex subscription login created with `codex login`.
+        """
+        command: list[str] = [
+            "codex",
+            "exec",
+            "--ephemeral",
+            "--color",
+            "never",
+            "--sandbox",
+            self.codex_cli_sandbox,
+            "--cd",
+            str(PROJECT_ROOT),
+        ]
+
+        if self.codex_cli_ignore_user_config:
+            command.append("--ignore-user-config")
+
+        if self.model:
+            command.extend(["--model", self.model])
+
+        if self.codex_cli_reasoning_effort:
+            command.extend(["-c", f'model_reasoning_effort="{self.codex_cli_reasoning_effort}"'])
+
+        if self.codex_cli_profile and not self.codex_cli_ignore_user_config:
+            command.extend(["--profile", self.codex_cli_profile])
+
+        if self.codex_cli_search:
+            command.append("--search")
+
+        with tempfile.NamedTemporaryFile(prefix="bookmark-digest-codex-", suffix=".txt", delete=False) as output_file:
+            output_path = Path(output_file.name)
+        command.extend(["--output-last-message", str(output_path)])
+
+        # Read the prompt from stdin. This avoids huge argv entries and keeps
+        # bookmark content out of process listings.
+        command.append("-")
+
+        try:
+            result = subprocess.run(
+                command,
+                input=prompt,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            final_message = output_path.read_text().strip() if output_path.exists() else ""
+        except FileNotFoundError as e:
+            raise RuntimeError("codex CLI not found. Install Codex and ensure `codex` is on PATH.") from e
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            stdout = (e.stdout or "").strip()
+            detail = stderr or stdout or str(e)
+            if "--search" in command and "unexpected argument '--search'" in detail:
+                console.print("[yellow]Codex CLI does not support --search; retrying without it.[/yellow]")
+                retry_command = [arg for arg in command if arg != "--search"]
+                try:
+                    result = subprocess.run(
+                        retry_command,
+                        input=prompt,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    final_message = output_path.read_text().strip() if output_path.exists() else ""
+                except subprocess.CalledProcessError as retry_error:
+                    retry_stderr = (retry_error.stderr or "").strip()
+                    retry_stdout = (retry_error.stdout or "").strip()
+                    retry_detail = retry_stderr or retry_stdout or str(retry_error)
+                    raise RuntimeError(f"codex CLI call failed: {retry_detail}") from retry_error
+            else:
+                raise RuntimeError(f"codex CLI call failed: {detail}") from e
+        finally:
+            output_path.unlink(missing_ok=True)
+
+        return final_message or (result.stdout or "").strip()
+
     def _get_client(self):
         """Get or create the AI client."""
         if self._client is None:
@@ -195,6 +289,8 @@ Write the executive summary directly in markdown."""
         """Make an AI API call."""
         if self.provider in ("claude_cli", "claude"):
             return self._call_claude_cli(prompt)
+        if self.provider in ("codex_cli", "codex"):
+            return self._call_codex_cli(prompt)
 
         client = self._get_client()
         tokens = max_tokens or self.max_tokens
@@ -383,18 +479,23 @@ Write the executive summary directly in markdown."""
 
 def research_bookmarks(
     bookmarks: list[ParsedBookmark],
-    provider: str = "anthropic",
-    model: str = "claude-sonnet-4-20250514",
+    provider: str = "codex_cli",
+    model: str = "gpt-5.5",
     claude_cli_tools: Optional[str] = "default",
     claude_cli_permission_mode: str = "bypassPermissions",
     claude_cli_dangerously_skip_permissions: bool = False,
+    codex_cli_search: bool = True,
+    codex_cli_sandbox: str = "read-only",
+    codex_cli_profile: Optional[str] = None,
+    codex_cli_ignore_user_config: bool = True,
+    codex_cli_reasoning_effort: Optional[str] = None,
 ) -> ResearchOutput:
     """
     Convenience function to run research on bookmarks.
 
     Args:
         bookmarks: List of ParsedBookmark objects
-        provider: AI provider (anthropic, openai, or claude_cli)
+        provider: AI provider (codex_cli, anthropic, openai, or claude_cli)
         model: Model name to use
 
     Returns:
@@ -406,6 +507,11 @@ def research_bookmarks(
         claude_cli_tools=claude_cli_tools,
         claude_cli_permission_mode=claude_cli_permission_mode,
         claude_cli_dangerously_skip_permissions=claude_cli_dangerously_skip_permissions,
+        codex_cli_search=codex_cli_search,
+        codex_cli_sandbox=codex_cli_sandbox,
+        codex_cli_profile=codex_cli_profile,
+        codex_cli_ignore_user_config=codex_cli_ignore_user_config,
+        codex_cli_reasoning_effort=codex_cli_reasoning_effort,
     )
     return researcher.research(bookmarks)
 

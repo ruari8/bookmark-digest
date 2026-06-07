@@ -4,6 +4,9 @@ config/cookies.json
 # Data files
 data/raw/
 data/processed.json
+data/blog.sqlite3
+data/blog.sqlite3-*
+data/*.log
 
 # Python
 __pycache__/
@@ -15,6 +18,8 @@ venv/
 .venv/
 env/
 .env
+.pytest_cache/
+.coverage
 
 # IDE
 .idea/
@@ -27,4 +32,8 @@ env/
 Thumbs.db
 
 # Generated outputs (these go to parent learn/ folder)
+weekly-digest-*.md
+*.pdf
 *.mp3
+site/
+content/posts/*.md

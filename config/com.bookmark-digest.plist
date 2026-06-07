@@ -9,18 +9,17 @@
     <array>
         <string>/Users/ruari/Documents/Startups/learn/bookmark-digest/.venv/bin/python</string>
         <string>/Users/ruari/Documents/Startups/learn/bookmark-digest/run.py</string>
-        <string>--output-format</string>
-        <string>pdf</string>
-        <string>--email</string>
+        <string>--mode</string>
+        <string>blog</string>
     </array>
 
     <key>StartCalendarInterval</key>
     <dict>
-        <!-- Run every Sunday at 8:00 AM -->
+        <!-- Run every Sunday at 9:00 AM -->
         <key>Weekday</key>
         <integer>0</integer>
         <key>Hour</key>
-        <integer>8</integer>
+        <integer>9</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
@@ -38,6 +37,8 @@
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>RESEND_API_KEY</key>
+        <string>replace-with-resend-api-key</string>
     </dict>
 </dict>
 </plist>

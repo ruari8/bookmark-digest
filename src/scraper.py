@@ -6,6 +6,7 @@ Uses cookie-based authentication to fetch bookmarks from X's internal API.
 
 import json
 import asyncio
+import os
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
@@ -270,7 +271,6 @@ class BookmarkScraper:
     HEADERS = {
         "accept": "*/*",
         "accept-language": "en-US,en;q=0.9",
-        "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
         "content-type": "application/json",
         "x-twitter-active-user": "yes",
         "x-twitter-client-language": "en",
@@ -331,6 +331,9 @@ class BookmarkScraper:
     def _get_headers(self) -> dict:
         """Get headers with CSRF token."""
         headers = self.HEADERS.copy()
+        bearer_token = os.getenv("X_BEARER_TOKEN", "")
+        if bearer_token:
+            headers["authorization"] = f"Bearer {bearer_token}"
         headers["x-csrf-token"] = self.cookies["ct0"]
         return headers
 

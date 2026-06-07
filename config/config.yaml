@@ -8,12 +8,22 @@ output:
 
 # AI Research settings
 ai:
-  provider: "claude_cli"  # claude_cli (Claude Code subscription), anthropic (API), or openai (API)
-  model: "opus"  # Opus 4.6 (via Claude Code alias)
+  provider: "codex_cli"  # codex_cli (ChatGPT/Codex subscription), anthropic (API), openai (API), or claude_cli
+  model: "gpt-5.5"
   # For complex research, use a more capable model
-  research_model: "opus"
+  research_model: "gpt-5.5"
   max_tokens: 8192
-  # Claude Code CLI settings (safer defaults for cron):
+
+  # Codex CLI settings. `codex exec` reuses your local `codex login` session.
+  codex_cli_search: true
+  codex_cli_sandbox: "read-only"
+  codex_cli_profile: null
+  codex_cli_reasoning_effort: "low"
+  # Ignores ~/.codex/config.toml while still using stored auth. This avoids
+  # personal config drift breaking scheduled digest runs.
+  codex_cli_ignore_user_config: true
+
+  # Legacy Claude Code CLI settings:
   # Tools:
   # - "WebSearch,WebFetch": recommended for unattended research (web-only discovery)
   # - "": disables all tools (bookmark-only; no web research)
@@ -25,6 +35,22 @@ ai:
   # - null: don't pass --permission-mode at all
   claude_cli_permission_mode: "bypassPermissions"
   claude_cli_dangerously_skip_permissions: false
+
+# Static blog settings
+blog:
+  site_title: "Bookmark Notes"
+  site_description: "Weekly research notes from Ruari's X bookmarks."
+  base_url: "http://localhost:8000"
+  state_path: "data/blog.sqlite3"
+  content_dir: "content/posts"
+  site_dir: "site"
+  first_run_bookmarks: 10
+  scan_limit: 50
+  bird_command: "npx --yes @steipete/bird"
+  include_author_chain: true
+  automatic_cover_image: false
+  cache_remote_media: true
+  max_cached_media_mb: 50
 
 # Content extraction
 parser:
@@ -49,22 +75,22 @@ audio:
 
 # Email delivery settings
 email:
-  enabled: false
-  provider: "gmail_smtp"
-  from_address: "your-digest-bot@gmail.com"
+  enabled: true
+  provider: "resend"
+  # Resend onboarding can send from onboarding@resend.dev immediately.
+  # After ruari.dev is verified in Resend, switch this to:
+  # "Bookmark Notes <bookmarks@ruari.dev>"
+  from_address: "onboarding@resend.dev"
   to_addresses:
-    - "your-main-email@gmail.com"
-  smtp_host: "smtp.gmail.com"
-  smtp_port: 587
-  smtp_username_env: "GMAIL_SMTP_USERNAME"
-  smtp_password_env: "GMAIL_SMTP_APP_PASSWORD"
+    - "ruaricraig1@gmail.com"
+  resend_api_key_env: "RESEND_API_KEY"
   attach_preferred: "pdf"      # pdf | markdown
   attach_fallback: "markdown"  # markdown | none
   send_on_empty: false
-  subject_prefix: "Bookmark Digest"
+  subject_prefix: "Bookmark Notes"
 
 # Scheduling (for reference - actual scheduling done via launchd/cron)
 schedule:
   day: "sunday"
-  hour: 8
+  hour: 9
   minute: 0

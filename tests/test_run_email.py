@@ -33,6 +33,25 @@ class RunEmailFailureTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertIn("Failed to send status email", result.output)
 
+    def test_test_email_mode_sends_blog_notification(self):
+        runner = CliRunner()
+        email_config = EmailConfig(
+            enabled=True,
+            from_address="bot@example.com",
+            to_addresses=["me@example.com"],
+            smtp_username="bot@example.com",
+            smtp_password="secret",
+        )
+
+        with patch.object(run, "load_config", return_value={"blog": {"base_url": "http://localhost:8000"}}), \
+             patch.object(run, "load_email_config", return_value=email_config), \
+             patch.object(run, "send_blog_notification") as send_mock:
+            result = runner.invoke(run.main, ["--mode", "test-email"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("Test email sent", result.output)
+        send_mock.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,8 +9,11 @@ a learning document (with optional podcast conversion).
 import json
 import sys
 from datetime import datetime
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 import click
 import yaml
@@ -26,6 +29,16 @@ from src.researcher import research_bookmarks
 from src.generator import generate_document
 from src.audio import generate_audio, print_notebooklm_instructions
 from src.emailer import load_email_config, send_digest_email, send_empty_status_email
+from src.blog import (
+    BlogState,
+    BlogPost,
+    BirdContextFetcher,
+    CodexBlogWriter,
+    StaticSiteBuilder,
+    context_to_brief,
+    resolve_blog_paths,
+    send_blog_notification,
+)
 
 console = Console()
 
@@ -71,7 +84,215 @@ def save_processed_ids(ids: list[str], existing_ids: list[str]):
         }, f, indent=2)
 
 
+class BlogSiteRequestHandler(SimpleHTTPRequestHandler):
+    """Static file handler with localhost-only feedback endpoints."""
+
+    def __init__(self, *args, state_path: Path, **kwargs):
+        self.state_path = state_path
+        super().__init__(*args, **kwargs)
+
+    def _send_json(self, status: int, payload: dict):
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 65536:
+            raise ValueError("Request body too large")
+        raw = self.rfile.read(length).decode("utf-8")
+        return json.loads(raw or "{}")
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/feedback":
+            slug = parse_qs(parsed.query).get("slug", [""])[0]
+            if not slug:
+                self._send_json(400, {"error": "Missing slug"})
+                return
+            self._send_json(200, BlogState(self.state_path).feedback_payload(slug))
+            return
+        super().do_GET()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        try:
+            payload = self._read_json()
+            state = BlogState(self.state_path)
+            if parsed.path == "/api/bookmark-feedback":
+                state.set_bookmark_feedback(
+                    bookmark_id=str(payload.get("bookmark_id") or ""),
+                    rating=int(payload.get("rating", 0)),
+                    note=str(payload.get("note") or ""),
+                )
+                self._send_json(200, {"ok": True})
+                return
+            if parsed.path == "/api/post-feedback":
+                state.set_post_feedback(
+                    post_slug=str(payload.get("slug") or ""),
+                    feedback=str(payload.get("feedback") or ""),
+                )
+                self._send_json(200, {"ok": True})
+                return
+        except Exception as error:
+            self._send_json(400, {"error": str(error)})
+            return
+        self._send_json(404, {"error": "Not found"})
+
+
+def _new_site_builder(config: dict, state: Optional[BlogState] = None) -> tuple[dict, StaticSiteBuilder]:
+    """Build a StaticSiteBuilder from resolved blog config."""
+    paths = resolve_blog_paths(config)
+    if state is None and Path(paths["state_path"]).exists():
+        state = BlogState(paths["state_path"])
+    builder = StaticSiteBuilder(
+        content_dir=paths["content_dir"],
+        site_dir=paths["site_dir"],
+        site_title=paths["site_title"],
+        site_description=paths["site_description"],
+        base_url=paths["base_url"],
+        state=state,
+        cache_remote_media=bool(paths["cache_remote_media"]),
+        max_cached_media_bytes=int(paths["max_cached_media_mb"]) * 1024 * 1024,
+    )
+    return paths, builder
+
+
+def rebuild_blog_site(config: dict):
+    """Render the static blog from existing post Markdown files."""
+    paths, builder = _new_site_builder(config)
+    index_path = builder.render_all()
+    console.print(f"[green]Rendered blog site[/green]: {index_path}")
+    console.print(f"Site directory: {paths['site_dir']}")
+
+
+def serve_blog_site(config: dict, port: int):
+    """Serve the generated static blog locally."""
+    paths = resolve_blog_paths(config)
+    state = BlogState(paths["state_path"])
+    _, builder = _new_site_builder(config, state=state)
+    site_dir = paths["site_dir"]
+    if not (site_dir / "index.html").exists():
+        builder.render_all()
+
+    handler = partial(BlogSiteRequestHandler, directory=str(site_dir), state_path=paths["state_path"])
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    console.print(f"[green]Serving blog locally[/green]: http://127.0.0.1:{port}")
+    console.print("Press Ctrl+C to stop.")
+    server.serve_forever()
+
+
+def send_test_blog_email(config: dict, email_config):
+    """Send a notification-only test email without generating a post."""
+    paths = resolve_blog_paths(config)
+    post = BlogPost(
+        title="Bookmark Notes email test",
+        slug="email-test",
+        summary="This is a test email from the Bookmark Notes blog pipeline.",
+        markdown="",
+        bookmark_ids=[],
+        latest_bookmark_id="",
+    )
+    try:
+        send_blog_notification(
+            email_config=email_config,
+            post=post,
+            post_url=f"{str(paths['base_url']).rstrip('/')}/",
+        )
+    except Exception as error:
+        raise click.ClickException(f"Email test failed: {error}") from error
+    recipients = ", ".join(email_config.to_addresses)
+    console.print(f"[green]Test email sent[/green] to {recipients}")
+
+
+def run_blog_pipeline(
+    config: dict,
+    max_bookmarks: int,
+    dry_run: bool,
+    email_config,
+):
+    """Fetch new bookmarks, generate a static blog post, and persist the checkpoint."""
+    paths = resolve_blog_paths(config)
+    state = BlogState(paths["state_path"])
+    paths, builder = _new_site_builder(config, state=state)
+    last_seen_id = state.get("last_seen_bookmark_id")
+
+    first_run_count = int(paths["first_run_bookmarks"])
+    scan_limit = int(paths["scan_limit"])
+    requested_count = max_bookmarks if max_bookmarks > 0 else (scan_limit if last_seen_id else first_run_count)
+
+    console.print("\n[bold]Step 1: Fetching bookmark context[/bold]")
+    fetcher = BirdContextFetcher(
+        cookies_path=CONFIG_DIR / "cookies.json",
+        command=str(paths["bird_command"]),
+    )
+    bookmarks = fetcher.fetch_bookmarks(
+        max_count=requested_count if not last_seen_id else first_run_count,
+        since_id=last_seen_id,
+        scan_limit=requested_count,
+        include_author_chain=bool(paths["include_author_chain"]),
+        stop_ids=state.processed_ids(),
+    )
+
+    processed_ids = state.processed_ids()
+    bookmarks = [bundle for bundle in bookmarks if bundle.bookmark.id not in processed_ids]
+
+    if not bookmarks:
+        console.print("[yellow]No new bookmarks to publish.[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(bookmarks)} new bookmarks[/green]")
+    if dry_run:
+        for bundle in bookmarks:
+            tweet = bundle.bookmark
+            console.print(f"  - @{tweet.author_username}: {tweet.text[:90]}...")
+        return
+
+    console.print("\n[bold]Step 2: Writing blog post with Codex[/bold]")
+    ai_config = config.get("ai", {})
+    writer = CodexBlogWriter(
+        model=ai_config.get("model", "gpt-5.5"),
+        reasoning_effort=ai_config.get("codex_cli_reasoning_effort", "low"),
+        search=ai_config.get("codex_cli_search", True),
+        sandbox=ai_config.get("codex_cli_sandbox", "read-only"),
+        ignore_user_config=ai_config.get("codex_cli_ignore_user_config", True),
+        automatic_cover_image=bool(paths["automatic_cover_image"]),
+    )
+    post = writer.write_post(
+        context_to_brief(bookmarks, preference_brief=state.preference_brief()),
+        bookmarks,
+    )
+
+    console.print("\n[bold]Step 3: Rendering static blog[/bold]")
+    state.save_bookmark_contexts(post.slug, bookmarks)
+    markdown_path, html_path = builder.write_post(post)
+    state.save_post(post, markdown_path=markdown_path, html_path=html_path)
+    post_url = f"{str(paths['base_url']).rstrip('/')}/posts/{post.slug}/"
+
+    if email_config.enabled:
+        console.print("\n[bold]Step 4: Sending blog notification email[/bold]")
+        send_blog_notification(email_config, post, post_url)
+        console.print("[green]Notification email sent[/green]")
+
+    console.print("\n" + "-" * 50)
+    console.print("[bold green]Blog post generated[/bold green]")
+    console.print(f"  Title: {post.title}")
+    console.print(f"  Markdown: {markdown_path}")
+    console.print(f"  HTML: {html_path}")
+    console.print(f"  URL: {post_url}")
+
+
 @click.command()
+@click.option(
+    "--mode",
+    type=click.Choice(["digest", "blog", "serve", "rebuild-site", "test-email"]),
+    default="digest",
+    show_default=True,
+    help="Run the legacy digest, generate a blog post, serve the site, or rebuild static files.",
+)
 @click.option(
     "--since",
     type=str,
@@ -86,8 +307,8 @@ def save_processed_ids(ids: list[str], existing_ids: list[str]):
 @click.option(
     "--output-format",
     type=click.Choice(["markdown", "pdf", "both"]),
-    default="markdown",
-    help="Output format for the digest",
+    default=None,
+    help="Output format for the digest (defaults to config output.format)",
 )
 @click.option(
     "--tts/--no-tts",
@@ -121,16 +342,25 @@ def save_processed_ids(ids: list[str], existing_ids: list[str]):
     default=None,
     help="Override email recipients (comma-separated)",
 )
+@click.option(
+    "--port",
+    type=int,
+    default=8000,
+    show_default=True,
+    help="Local port for --mode serve.",
+)
 def main(
+    mode: str,
     since: Optional[str],
     max_bookmarks: int,
-    output_format: str,
+    output_format: Optional[str],
     tts: bool,
     notebooklm: bool,
     force: bool,
     dry_run: bool,
     email_enabled: Optional[bool],
     email_to: Optional[str],
+    port: int,
 ):
     """
     Generate a research digest from your X bookmarks.
@@ -161,11 +391,41 @@ def main(
 
     # Load config
     config = load_config()
+
+    if mode == "serve":
+        serve_blog_site(config, port=port)
+        return
+
+    if mode == "rebuild-site":
+        rebuild_blog_site(config)
+        return
+
     email_config = load_email_config(
         config,
         enabled_override=email_enabled,
         recipients_override=email_to,
     )
+
+    if mode == "blog":
+        run_blog_pipeline(
+            config=config,
+            max_bookmarks=max_bookmarks,
+            dry_run=dry_run,
+            email_config=email_config,
+        )
+        return
+
+    if mode == "test-email":
+        send_test_blog_email(config=config, email_config=email_config)
+        return
+
+    output_config = config.get("output", {})
+    if output_format is None:
+        output_format = output_config.get("format") or "markdown"
+    if output_format not in {"markdown", "pdf", "both"}:
+        raise click.ClickException(
+            "Invalid output.format in config/config.yaml. Use markdown, pdf, or both."
+        )
 
     # Load processed IDs
     processed_ids = [] if force else load_processed_ids()
@@ -243,24 +503,32 @@ def main(
     ai_config = config.get("ai", {})
     research = research_bookmarks(
         parsed,
-        provider=ai_config.get("provider", "anthropic"),
-        model=ai_config.get("model", "claude-sonnet-4-20250514"),
+        provider=ai_config.get("provider", "codex_cli"),
+        model=ai_config.get("model", "gpt-5.5"),
         claude_cli_tools=ai_config.get("claude_cli_tools", None),
         claude_cli_permission_mode=ai_config.get("claude_cli_permission_mode", "bypassPermissions"),
         claude_cli_dangerously_skip_permissions=ai_config.get("claude_cli_dangerously_skip_permissions", False),
+        codex_cli_search=ai_config.get("codex_cli_search", True),
+        codex_cli_sandbox=ai_config.get("codex_cli_sandbox", "read-only"),
+        codex_cli_profile=ai_config.get("codex_cli_profile", None),
+        codex_cli_ignore_user_config=ai_config.get("codex_cli_ignore_user_config", True),
+        codex_cli_reasoning_effort=ai_config.get("codex_cli_reasoning_effort", None),
     )
 
     # Step 4: Generate document
     console.print("\n[bold]Step 4: Generating document[/bold]")
-    output_config = config.get("output", {})
-    output_dir = Path(output_config.get("directory", "../")).resolve()
-    if not output_dir.is_absolute():
-        output_dir = PROJECT_ROOT / output_config.get("directory", "..")
+    output_dir_value = Path(output_config.get("directory") or "../")
+    if output_dir_value.is_absolute():
+        output_dir = output_dir_value
+    else:
+        output_dir = PROJECT_ROOT / output_dir_value
+    output_dir = output_dir.resolve()
 
     results = generate_document(
         research,
         output_dir=output_dir,
         format=output_format,
+        filename_template=output_config.get("filename_template") or "weekly-digest-{date}.md",
     )
 
     # Step 5: Audio (optional)
