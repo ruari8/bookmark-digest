@@ -1429,7 +1429,11 @@ body {
   line-height: 1.65;
 }
 
-a { color: var(--accent-strong); text-decoration-thickness: 0.08em; }
+a {
+  color: var(--accent-strong);
+  overflow-wrap: anywhere;
+  text-decoration-thickness: 0.08em;
+}
 
 .site-header {
   display: flex;
@@ -1638,6 +1642,10 @@ nav a { color: var(--muted); text-decoration: none; }
   flex-wrap: wrap;
   gap: 12px;
   font-size: 0.95rem;
+}
+
+.source-actions a {
+  max-width: 100%;
 }
 
 .source-media {
