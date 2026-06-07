@@ -6,7 +6,7 @@ Once a week it fetches new bookmarks, gathers surrounding tweet context with
 Bird, asks Codex to write a post, renders a static site, and sends a Resend
 email notification when a new post is published.
 
-This is a personal automation project for `bookmarks.ruari.dev`, not a hosted
+This is a personal automation project for `bookmark.ruari.dev`, not a hosted
 SaaS product. The goal is a low-maintenance pipeline that helps me revisit the
 technical links, demos, repos, videos, and threads I save during the week.
 

@@ -846,7 +846,7 @@ class CodexBlogWriter:
 
 
 def build_blog_prompt(brief: str) -> str:
-    return f"""You are writing a public blog post for bookmarks.ruari.dev.
+    return f"""You are writing a public blog post for bookmark.ruari.dev.
 
 Goal:
 - Write one coherent weekly blog post about the themes in my X bookmarks.

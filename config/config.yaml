@@ -40,7 +40,7 @@ ai:
 blog:
   site_title: "Bookmark Notes"
   site_description: "Weekly research notes from Ruari's X bookmarks."
-  base_url: "http://localhost:8000"
+  base_url: "https://bookmark.ruari.dev"
   state_path: "data/blog.sqlite3"
   content_dir: "content/posts"
   site_dir: "site"
