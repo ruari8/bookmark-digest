@@ -47,7 +47,7 @@ Send a test email without generating a blog post:
 The normal weekly command is:
 
 ```sh
-.venv/bin/python run.py --mode blog
+.venv/bin/python run.py
 ```
 
 The schedule should run that at 9am on Sunday.

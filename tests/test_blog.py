@@ -8,10 +8,13 @@ from src.blog import (
     BlogPost,
     BlogState,
     BookmarkContext,
-    StaticSiteBuilder,
     TweetContext,
+    build_blog_prompt,
+    clean_model_markdown,
+    context_to_brief,
     parse_tweet_context,
 )
+from src.site import StaticSiteBuilder, markdown_to_html
 
 
 class FakeResponse:
@@ -75,7 +78,7 @@ class BlogPipelineTests(unittest.TestCase):
                     "entities": {
                         "urls": [
                             {"expanded_url": "https://example.com/project"},
-                            {"expanded_url": "https://x.com/ignored/status/1"},
+                            {"expanded_url": "https://x.com/linked/status/1"},
                         ]
                     },
                     "extended_entities": {
@@ -122,6 +125,7 @@ class BlogPipelineTests(unittest.TestCase):
         self.assertEqual(tweet.id, "100")
         self.assertEqual(tweet.author_username, "ruari")
         self.assertEqual(tweet.urls, ["https://example.com/project"])
+        self.assertEqual(tweet.linked_tweet_ids, ["1"])
         self.assertEqual(tweet.media[0].url, "https://pbs.twimg.com/media/photo.jpg")
         self.assertEqual(tweet.media[1].video_url, "https://video/high.mp4")
         self.assertIsNotNone(tweet.quote_tweet)
@@ -138,6 +142,7 @@ class BlogPipelineTests(unittest.TestCase):
                 site_title="Bookmark Notes",
                 site_description="Weekly notes.",
                 base_url="http://localhost:8000",
+                cache_remote_media=False,
             )
             post = BlogPost(
                 title="Testing The Blog Pipeline",
@@ -160,6 +165,7 @@ class BlogPipelineTests(unittest.TestCase):
             self.assertEqual(state.list_posts()[0]["slug"], post.slug)
             self.assertIn("Testing The Blog Pipeline", html_path.read_text())
             self.assertEqual(html_path.read_text().count("<h1>"), 1)
+            self.assertIn("No. 1", (root / "site" / "index.html").read_text())
 
     def test_feedback_and_source_cards_render_from_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,10 +204,14 @@ class BlogPipelineTests(unittest.TestCase):
             state.save_post(post, markdown_path=markdown_path, html_path=html_path)
             html = html_path.read_text()
 
-            self.assertIn("Bookmarked sources", html)
+            self.assertIn("The clippings", html)
             self.assertIn("A demo video worth watching.", html)
-            self.assertIn("More like this.", html)
+            # Private notes must never be baked into public static HTML.
+            self.assertNotIn("More like this.", html)
+            self.assertNotIn("Lead with demos.", html)
+            self.assertNotIn('class="active"', html)
             self.assertIn("Lead with demos.", state.preference_brief())
+            self.assertIn("More like this.", state.preference_brief())
 
     def test_media_cache_rewrites_remote_urls(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,7 +224,7 @@ class BlogPipelineTests(unittest.TestCase):
                 base_url="http://localhost:8000",
             )
 
-            with patch("src.blog.urlopen", return_value=FakeResponse(b"video")):
+            with patch("src.site.urlopen", return_value=FakeResponse(b"video")):
                 local_url = builder._cache_media_url("https://video.twimg.com/path/demo.mp4?tag=1")
 
             self.assertTrue(local_url.startswith("/media/"))
@@ -237,6 +247,98 @@ class BlogPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual([bundle.bookmark.id for bundle in bookmarks], ["new-2", "new-1"])
+
+
+class LinkedTweetFetcher(FakeBirdFetcher):
+    def __init__(self):
+        super().__init__([])
+        self.reads = []
+
+    def read_tweet(self, tweet_id):
+        self.reads.append(tweet_id)
+        if tweet_id == "broken":
+            raise RuntimeError("bird failed")
+        return parse_tweet_context(tweet_payload(tweet_id, "linked"))
+
+
+class WriterInputTests(unittest.TestCase):
+    def test_attach_linked_tweets_skips_quotes_tolerates_failures_and_respects_limit(self):
+        quote = TweetContext(id="q", text="", author_username="", author_name="", created_at="", tweet_url="")
+        first = TweetContext(
+            id="1", text="see", author_username="a", author_name="", created_at="", tweet_url="",
+            quote_tweet=quote, linked_tweet_ids=["q", "broken", "200"],
+        )
+        second = TweetContext(
+            id="2", text="also", author_username="b", author_name="", created_at="", tweet_url="",
+            linked_tweet_ids=["300", "400"],
+        )
+        bundles = [BookmarkContext(bookmark=first), BookmarkContext(bookmark=second)]
+        fetcher = LinkedTweetFetcher()
+
+        fetcher.attach_linked_tweets(bundles, limit=3)
+
+        self.assertEqual(fetcher.reads, ["broken", "200", "300"])
+        self.assertEqual([t.id for t in bundles[0].linked_tweets], ["200"])
+        self.assertEqual([t.id for t in bundles[1].linked_tweets], ["300"])
+        brief = context_to_brief(bundles)
+        self.assertIn("- Linked tweet:", brief)
+        self.assertIn("Tweet 200", brief)
+
+    def test_prompt_requires_coverage_and_mentions_search_only_when_enabled(self):
+        with_search = build_blog_prompt("BRIEF", search=True)
+        self.assertIn("live web search", with_search)
+        self.assertIn("## Also noted", with_search)
+        self.assertIn("Every bookmark in the brief must appear", with_search)
+        self.assertTrue(with_search.rstrip().endswith("BRIEF"))
+        self.assertNotIn("python -m src.blog_tools", with_search)
+        self.assertIn("Web search is off", build_blog_prompt("BRIEF", search=False))
+
+    def test_clean_model_markdown_drops_preamble_and_fences(self):
+        self.assertEqual(clean_model_markdown("Sure, here it is.\n\n```markdown\n# Title\n\nBody\n```"), "# Title\n\nBody")
+        self.assertEqual(clean_model_markdown("```\n# Title\nBody\n```"), "# Title\nBody")
+        kept = "# Title\n\n```py\nx = 1\n```"
+        self.assertEqual(clean_model_markdown(kept), kept)
+
+
+class MarkdownSafetyTests(unittest.TestCase):
+    def test_raw_html_and_unsafe_links_are_neutralised(self):
+        rendered = markdown_to_html(
+            "Hello <script>alert(1)</script>\n\n<iframe src='x'></iframe>\n\n"
+            "[bad](javascript:alert(1)) [good](https://example.com) [rel](/posts/a/)"
+        )
+        self.assertNotIn("<script", rendered)
+        self.assertNotIn("<iframe", rendered)
+        self.assertNotIn("javascript:", rendered)
+        self.assertIn('href="https://example.com"', rendered)
+        self.assertIn('href="/posts/a/"', rendered)
+
+    def test_entity_encoded_and_obfuscated_schemes_are_dropped(self):
+        for link in [
+            "javascript&#58;alert(1)",
+            "jav&#x61;script:alert(1)",
+            "javascript&colon;alert(1)",
+            "&#106;avascript:alert(1)",
+            "java&#9;script:alert(1)",
+            "JaVaScRiPt:alert(1)",
+            "data:text/html,hi",
+            "javascript&amp;#58;alert(1)",
+        ]:
+            rendered = markdown_to_html(f"[x]({link})")
+            self.assertNotIn("href", rendered, link)
+
+    def test_malformed_urls_do_not_crash_rendering(self):
+        rendered = markdown_to_html("[bad](https://[invalid) and [ok](https://example.com/a?b=1#c)")
+        self.assertIn('href="https://example.com/a?b=1#c"', rendered)
+
+    def test_unrenderable_post_is_rolled_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = StaticSiteBuilder(root / "content", root / "site", "T", "D", "", cache_remote_media=False)
+            post = BlogPost("T", "2026-11-01-t", "s", "# T\n\nBody", ["1"], "1")
+            with patch.object(StaticSiteBuilder, "render_all", side_effect=RuntimeError("boom")):
+                with self.assertRaises(RuntimeError):
+                    builder.write_post(post)
+            self.assertFalse((root / "content" / "2026-11-01-t.md").exists())
 
 
 if __name__ == "__main__":
