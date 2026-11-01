@@ -26,11 +26,8 @@ class CodexCLI:
     timeout_seconds: int = 1800
 
     def command(self, output_path: Path) -> list[str]:
-        command = [self.binary]
-        # `--search` is a global flag; `codex exec --search` is rejected.
-        if self.search:
-            command.append("--search")
-        command += [
+        command = [
+            self.binary,
             "exec",
             "--ephemeral",
             "--color", "never",
@@ -39,6 +36,9 @@ class CodexCLI:
             "--skip-git-repo-check",
             "--model", self.model,
             "-c", f'model_reasoning_effort="{self.reasoning_effort}"',
+            # `--search` only reaches the interactive TUI; exec reads this
+            # config key, whose default is "cached" (no fresh results).
+            "-c", f'web_search="{"live" if self.search else "disabled"}"',
             "--output-last-message", str(output_path),
         ]
         if self.ignore_user_config:

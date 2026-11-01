@@ -7,9 +7,11 @@ from src.codex import CodexCLI
 
 
 class CodexCLITests(unittest.TestCase):
-    def test_search_is_a_global_flag_before_exec(self):
+    def test_live_search_is_set_through_exec_config(self):
         command = CodexCLI(model="gpt-6.1-sol").command(Path("/tmp/out.txt"))
-        self.assertEqual(command[:3], ["codex", "--search", "exec"])
+        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertNotIn("--search", command)  # TUI-only flag; exec ignores it
+        self.assertIn('web_search="live"', command)
         self.assertIn("--ignore-user-config", command)
         self.assertEqual(command[command.index("--model") + 1], "gpt-6.1-sol")
         self.assertIn('model_reasoning_effort="medium"', command)
@@ -17,8 +19,8 @@ class CodexCLITests(unittest.TestCase):
 
     def test_search_can_be_disabled(self):
         command = CodexCLI(model="m", search=False).command(Path("/tmp/out.txt"))
-        self.assertNotIn("--search", command)
-        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertIn('web_search="disabled"', command)
+        self.assertNotIn('web_search="live"', command)
 
     def test_run_returns_last_message_and_sends_prompt_on_stdin(self):
         def fake_run(command, **kwargs):

@@ -312,6 +312,34 @@ class MarkdownSafetyTests(unittest.TestCase):
         self.assertIn('href="https://example.com"', rendered)
         self.assertIn('href="/posts/a/"', rendered)
 
+    def test_entity_encoded_and_obfuscated_schemes_are_dropped(self):
+        for link in [
+            "javascript&#58;alert(1)",
+            "jav&#x61;script:alert(1)",
+            "javascript&colon;alert(1)",
+            "&#106;avascript:alert(1)",
+            "java&#9;script:alert(1)",
+            "JaVaScRiPt:alert(1)",
+            "data:text/html,hi",
+            "javascript&amp;#58;alert(1)",
+        ]:
+            rendered = markdown_to_html(f"[x]({link})")
+            self.assertNotIn("href", rendered, link)
+
+    def test_malformed_urls_do_not_crash_rendering(self):
+        rendered = markdown_to_html("[bad](https://[invalid) and [ok](https://example.com/a?b=1#c)")
+        self.assertIn('href="https://example.com/a?b=1#c"', rendered)
+
+    def test_unrenderable_post_is_rolled_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = StaticSiteBuilder(root / "content", root / "site", "T", "D", "", cache_remote_media=False)
+            post = BlogPost("T", "2026-11-01-t", "s", "# T\n\nBody", ["1"], "1")
+            with patch.object(StaticSiteBuilder, "render_all", side_effect=RuntimeError("boom")):
+                with self.assertRaises(RuntimeError):
+                    builder.write_post(post)
+            self.assertFalse((root / "content" / "2026-11-01-t.md").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

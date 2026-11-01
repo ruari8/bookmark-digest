@@ -55,7 +55,8 @@ Cron (Sunday 09:00):
 retired, the run fails with `model_not_found` and you get an alert email; run
 `codex debug models` to see what the account can use now.
 
-Codex runs with `--search` (live web search) and a read-only sandbox. It cannot
+Codex runs with `-c web_search="live"` and a read-only sandbox. (`codex --search`
+only affects the interactive TUI; `codex exec` defaults to cached search.) It cannot
 run shell commands, so all X context (author threads, quoted posts, and linked
 x.com posts) is fetched by the pipeline before Codex starts.
 

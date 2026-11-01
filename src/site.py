@@ -33,7 +33,8 @@ from .blog import (
 console = Console()
 
 ASSET_VERSION = "20261101-1"
-SAFE_URL_SCHEMES = {"http", "https", "mailto", ""}
+SAFE_URL_SCHEMES = {"http", "https", "mailto"}
+URL_SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.\-]*):")
 
 
 class StaticSiteBuilder:
@@ -64,8 +65,16 @@ class StaticSiteBuilder:
     def write_post(self, post: BlogPost) -> tuple[Path, Path]:
         self.content_dir.mkdir(parents=True, exist_ok=True)
         markdown_path = self.content_dir / f"{post.slug}.md"
+        existed = markdown_path.exists()
         markdown_path.write_text(with_front_matter(post))
-        self.render_all()
+        try:
+            self.render_all()
+        except Exception:
+            # Never leave an unrenderable post behind: every later render
+            # re-reads all posts, so it would block future issues too.
+            if not existed:
+                markdown_path.unlink(missing_ok=True)
+            raise
         return markdown_path, self.site_dir / "posts" / post.slug / "index.html"
 
     def render_all(self) -> Path:
@@ -288,7 +297,7 @@ class StaticSiteBuilder:
               {self._media_html(tweet)}
               <div class="private-feedback-surface">
                 <div class="rating-buttons">{buttons}</div>
-                <textarea data-note placeholder="Why this was or was not interesting"></textarea>
+                <textarea data-note aria-label="Private note on clipping {number:02d} by @{html.escape(tweet.author_username)}" placeholder="Why this was or was not interesting"></textarea>
                 <p class="save-status" aria-live="polite"></p>
               </div>
             </div>
@@ -313,6 +322,7 @@ class StaticSiteBuilder:
       <section class="private-feedback" data-post-slug="{html.escape(post['slug'])}">
         <h2 class="label">Private curation notes</h2>
         <p class="feedback-help">Only visible on localhost. Notes and ratings are stored locally and fed into the next issue's prompt.</p>
+        <label class="label" for="post-feedback">Notes for the next issue</label>
         <textarea id="post-feedback" placeholder="What did this issue get right? What should the next one do differently?"></textarea>
         <button type="button" id="save-post-feedback">Save notes</button>
         <p class="save-status" id="post-feedback-status" aria-live="polite"></p>
@@ -433,7 +443,7 @@ def markdown_to_html(markdown_text: str) -> str:
             for element in root.iter():
                 for attribute in ("href", "src"):
                     value = element.get(attribute)
-                    if value is not None and urlparse(value.strip()).scheme.lower() not in SAFE_URL_SCHEMES:
+                    if value is not None and not is_safe_url(value):
                         del element.attrib[attribute]
 
     md = markdown_lib.Markdown(extensions=["tables", "fenced_code", "sane_lists", "smarty"])
@@ -441,6 +451,29 @@ def markdown_to_html(markdown_text: str) -> str:
     md.inlinePatterns.deregister("html")
     md.treeprocessors.register(DropUnsafeUrls(md), "drop_unsafe_urls", 0)
     return md.convert(markdown_text)
+
+
+def is_safe_url(value: str) -> bool:
+    """True for http(s)/mailto URLs and scheme-less relative links.
+
+    Checks the URL the browser will see: HTML entities decoded (repeatedly, to
+    catch double encoding) and whitespace/control characters removed, so
+    `javascript&#58;...` or `jav\tascript:` cannot slip through. Never raises.
+    """
+    decoded = value
+    for _ in range(3):
+        unescaped = html.unescape(decoded)
+        if unescaped == decoded:
+            break
+        decoded = unescaped
+    normalized = re.sub(r"[\x00-\x20\x7f]+", "", decoded).lower()
+    if normalized.startswith("//"):
+        return True  # protocol-relative: resolves to http(s)
+    match = URL_SCHEME_RE.match(normalized)
+    if match:
+        return match.group(1) in SAFE_URL_SCHEMES
+    # No valid scheme. A colon before any / ? # would still be read as a scheme.
+    return ":" not in re.split(r"[/?#]", normalized, maxsplit=1)[0]
 
 
 def split_standfirst(body: str) -> tuple[str, str]:
