@@ -1,189 +1,78 @@
-# Bookmark Digest
+# Bookmark Notes
 
-Bookmark Digest turns my X bookmarks into a small public blog.
+Turns my X bookmarks into a small weekly paper at `bookmark.ruari.dev`.
 
-Once a week it fetches new bookmarks, gathers surrounding tweet context with
-Bird, asks Codex to write a post, renders a static site, and sends a Resend
-email notification when a new post is published.
-
-This is a personal automation project for `bookmark.ruari.dev`, not a hosted
-SaaS product. The goal is a low-maintenance pipeline that helps me revisit the
-technical links, demos, repos, videos, and threads I save during the week.
-
-## What It Does
-
-- Fetches new X bookmarks with the `bird` CLI.
-- Handles the first run as the latest 10 bookmarks.
-- Tracks processed bookmarks in SQLite so later runs only publish new items.
-- Handles the edge case where the previous top bookmark was unbookmarked by
-  stopping at the first already-processed bookmark.
-- Captures linked URLs, quoted tweets, media, and bounded author-thread context.
-- Uses Codex CLI to write a weekly Markdown blog post.
-- Renders a static HTML site with RSS.
-- Caches tweet images/videos into generated static files so media works without
-  hotlinking X video URLs.
-- Adds localhost-only feedback controls for rating bookmarks and leaving notes.
-- Sends a Resend email notification after a new post is created.
-
-## Product Shape
+Every Sunday it fetches the week's new bookmarks with Bird, has Codex research
+and write an issue (with live web search for deep dives), renders a static site
+with RSS, and emails me a link. If the run fails, it emails me the error instead.
 
 ```text
-X bookmarks
-  -> Bird context fetcher
-  -> SQLite checkpoint + preference state
-  -> Codex blog writer
-  -> Markdown posts
-  -> Static HTML/RSS/media files
-  -> Resend notification email
+X bookmarks -> Bird (bookmarks, author threads, linked posts)
+            -> SQLite checkpoint + my ratings/notes
+            -> Codex CLI writer (web search on, no shell)
+            -> Markdown issue -> static HTML + RSS + cached media
+            -> Resend email (new issue, or failure alert)
 ```
-
-The public site is static. Private feedback and ratings only appear when served
-locally, and are stored in SQLite for the next writing prompt.
 
 ## Requirements
 
 - Python 3.11+
 - Node/npm for `npx @steipete/bird`
-- X cookies in `config/cookies.json`
-- Codex CLI logged in locally
-- Resend API key in `.env`
+- X cookies in `config/cookies.json` (`auth_token`, `ct0`)
+- Codex CLI logged in (`codex login`) with access to the model in `config/config.yaml`
+- `RESEND_API_KEY` in `.env`
 
 ## Setup
 
 ```bash
-git clone https://github.com/ruari8/bookmark-digest.git
-cd bookmark-digest
-
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cp config/cookies.example.json config/cookies.json
-cp .env.example .env
-```
-
-Add X cookies to `config/cookies.json`:
-
-```json
-{
-  "auth_token": "your_auth_token_value",
-  "ct0": "your_ct0_value"
-}
-```
-
-Add your Resend key to `.env`:
-
-```txt
-RESEND_API_KEY=re_your_resend_api_key
+.venv/bin/pip install -r requirements.txt
+cp config/cookies.example.json config/cookies.json   # add auth_token and ct0
+cp .env.example .env                                 # add RESEND_API_KEY
 ```
 
 `config/cookies.json` and `.env` are gitignored.
 
-## Email
-
-Local testing uses Resend's onboarding sender:
-
-```yaml
-from_address: "onboarding@resend.dev"
-```
-
-That works before `ruari.dev` is verified in Resend. After the domain is
-verified, switch the sender to:
-
-```yaml
-from_address: "Bookmark Notes <bookmarks@ruari.dev>"
-```
-
-Send a test email without creating a post:
+## Usage
 
 ```bash
+.venv/bin/python run.py                     # weekly run: fetch, write, render, email
+.venv/bin/python run.py --dry-run           # list what would go into the next issue
+.venv/bin/python run.py --mode rebuild-site # re-render every issue from content/posts
+.venv/bin/python run.py --mode serve        # local preview with private rating controls
 .venv/bin/python run.py --mode test-email
 ```
 
-See [docs/email-setup.md](docs/email-setup.md) for the Resend setup notes.
-
-## Usage
-
-Preview what would be published without generating a post:
-
-```bash
-.venv/bin/python run.py --mode blog --dry-run
-```
-
-Generate a new blog post if there are new bookmarks:
-
-```bash
-.venv/bin/python run.py --mode blog
-```
-
-Rebuild the static site from existing Markdown posts:
-
-```bash
-.venv/bin/python run.py --mode rebuild-site
-```
-
-Serve locally with private feedback controls enabled:
-
-```bash
-.venv/bin/python run.py --mode serve --port 8000
-```
-
-Then open:
-
-```txt
-http://127.0.0.1:8000
-```
-
-## Scheduling
-
-Run every Sunday at 9am:
+Cron (Sunday 09:00):
 
 ```cron
-0 9 * * 0 cd /path/to/bookmark-digest && .venv/bin/python run.py --mode blog >> data/cron.log 2>&1
+0 9 * * 0 cd /path/to/bookmark-digest && .venv/bin/python run.py >> data/cron.log 2>&1
 ```
 
-The repo also includes a macOS launchd example in
-`config/com.bookmark-digest.plist`.
+## The writer
 
-## Generated Files
+`ai.model` in `config/config.yaml` picks the Codex model. When a model is
+retired, the run fails with `model_not_found` and you get an alert email; run
+`codex debug models` to see what the account can use now.
 
-The generated site is intentionally gitignored:
+Codex runs with `--search` (live web search) and a read-only sandbox. It cannot
+run shell commands, so all X context (author threads, quoted posts, and linked
+x.com posts) is fetched by the pipeline before Codex starts.
 
-```txt
-site/
-content/posts/*.md
-data/blog.sqlite3
-```
+## Private feedback
 
-Those files are runtime/deployment state, not source code. For deployment, copy
-or preserve them on the server and regenerate `site/` there.
+`--mode serve` shows rating buttons and note fields on each bookmark. Ratings
+and notes are stored in `data/blog.sqlite3` and fed into the next issue's prompt
+so it leans toward what I found interesting. They are never written into the
+static HTML; the local page loads them from `/api/feedback`.
+
+## Generated files
+
+`site/`, `content/posts/*.md` and `data/` are runtime state on the server and
+are gitignored.
 
 ## Tests
 
 ```bash
 .venv/bin/python -m unittest discover -v
 ```
-
-Coverage includes:
-
-- Blog state/checkpointing.
-- Missing-checkpoint fallback when a prior top bookmark was unbookmarked.
-- Resend email payloads.
-- Static site rendering.
-- Media caching.
-- Codex CLI invocation.
-
-## Security Notes
-
-- Do not commit `.env`.
-- Do not commit `config/cookies.json`.
-- Do not commit `data/` or `site/`.
-- The public site is static; private feedback controls only appear on localhost.
-- Resend API keys can be revoked without affecting a Google account.
-
-## Limitations
-
-- X bookmark access is brittle and depends on cookies plus Bird behavior.
-- Codex CLI must be authenticated on the machine running the weekly job.
-- Blog quality depends on the bookmark context and saved feedback signals.
-- Resend domain verification is needed before sending from `bookmarks@ruari.dev`.

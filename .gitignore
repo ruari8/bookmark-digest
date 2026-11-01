@@ -2,8 +2,6 @@
 config/cookies.json
 
 # Data files
-data/raw/
-data/processed.json
 data/blog.sqlite3
 data/blog.sqlite3-*
 data/*.log
@@ -31,9 +29,6 @@ env/
 .DS_Store
 Thumbs.db
 
-# Generated outputs (these go to parent learn/ folder)
-weekly-digest-*.md
-*.pdf
-*.mp3
+# Generated site and posts (runtime state on the server)
 site/
 content/posts/*.md

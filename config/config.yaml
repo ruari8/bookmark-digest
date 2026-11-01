@@ -1,45 +1,20 @@
-# Bookmark Digest Configuration
+# Bookmark Notes configuration
 
-# Output settings
-output:
-  directory: "../"  # Parent learn/ folder
-  format: "markdown"  # markdown, pdf, or both
-  filename_template: "weekly-digest-{date}.md"
-
-# AI Research settings
+# Writer: Codex CLI, using the machine's `codex login` (ChatGPT subscription).
+# Check which models the account can use with `codex debug models`.
 ai:
-  provider: "codex_cli"  # codex_cli (ChatGPT/Codex subscription), anthropic (API), openai (API), or claude_cli
-  model: "gpt-5.5"
-  # For complex research, use a more capable model
-  research_model: "gpt-5.5"
-  max_tokens: 8192
+  model: "gpt-6.1-sol"
+  reasoning_effort: "medium"   # low | medium | high
+  web_search: true             # live web search for deep dives on bookmarked items
+  sandbox: "read-only"
+  # Ignore ~/.codex/config.toml (auth still works) so personal config can't break the weekly run.
+  ignore_user_config: true
+  timeout_seconds: 1800
 
-  # Codex CLI settings. `codex exec` reuses your local `codex login` session.
-  codex_cli_search: true
-  codex_cli_sandbox: "read-only"
-  codex_cli_profile: null
-  codex_cli_reasoning_effort: "low"
-  # Ignores ~/.codex/config.toml while still using stored auth. This avoids
-  # personal config drift breaking scheduled digest runs.
-  codex_cli_ignore_user_config: true
-
-  # Legacy Claude Code CLI settings:
-  # Tools:
-  # - "WebSearch,WebFetch": recommended for unattended research (web-only discovery)
-  # - "": disables all tools (bookmark-only; no web research)
-  # - null: omit --tools flag (Claude Code default tool set; may include powerful tools like Bash/Read/Edit)
-  # - "default": explicit default tool set (typically includes Bash/Read/Edit)
-  claude_cli_tools: "WebSearch,WebFetch"
-  # Permission mode:
-  # - "bypassPermissions": unattended (recommended when using web-only tools)
-  # - null: don't pass --permission-mode at all
-  claude_cli_permission_mode: "bypassPermissions"
-  claude_cli_dangerously_skip_permissions: false
-
-# Static blog settings
+# Static site
 blog:
   site_title: "Bookmark Notes"
-  site_description: "Weekly research notes from Ruari's X bookmarks."
+  site_description: "Weekly notes from Ruari's X bookmarks"
   base_url: "https://bookmark.ruari.dev"
   state_path: "data/blog.sqlite3"
   content_dir: "content/posts"
@@ -48,49 +23,17 @@ blog:
   scan_limit: 50
   bird_command: "npx --yes @steipete/bird"
   include_author_chain: true
+  max_linked_tweets: 15        # linked x.com posts fetched for extra context
   automatic_cover_image: false
   cache_remote_media: true
   max_cached_media_mb: 50
 
-# Content extraction
-parser:
-  # Maximum articles to extract per run
-  max_articles: 50
-  # Timeout for fetching URLs (seconds)
-  fetch_timeout: 30
-
-# Scraper settings
-scraper:
-  # How many bookmarks to fetch per run (0 = all new since last run)
-  max_bookmarks: 0
-  # Only process bookmarks newer than this many days (0 = no limit)
-  days_limit: 7
-
-# Audio settings (optional)
-audio:
-  enabled: false
-  provider: "openai"  # openai or elevenlabs
-  voice: "alloy"  # OpenAI voices: alloy, echo, fable, onyx, nova, shimmer
-  output_format: "mp3"
-
-# Email delivery settings
+# Notification email (Resend). Also used to alert on a failed weekly run.
 email:
   enabled: true
-  provider: "resend"
-  # Resend onboarding can send from onboarding@resend.dev immediately.
-  # After ruari.dev is verified in Resend, switch this to:
-  # "Bookmark Notes <bookmarks@ruari.dev>"
+  # Switch to "Bookmark Notes <bookmarks@ruari.dev>" once ruari.dev is verified in Resend.
   from_address: "onboarding@resend.dev"
   to_addresses:
     - "ruaricraig1@gmail.com"
   resend_api_key_env: "RESEND_API_KEY"
-  attach_preferred: "pdf"      # pdf | markdown
-  attach_fallback: "markdown"  # markdown | none
-  send_on_empty: false
   subject_prefix: "Bookmark Notes"
-
-# Scheduling (for reference - actual scheduling done via launchd/cron)
-schedule:
-  day: "sunday"
-  hour: 9
-  minute: 0
